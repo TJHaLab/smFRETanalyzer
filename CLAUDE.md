@@ -81,13 +81,19 @@ JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64 mvn clean package
 
 `pom-scijava` sets `maven.compiler.release` to 8 (matching the Java 8 runtime Fiji bundles — `Fiji.app/java/zulu8*`), and the JDK 21 compiler rejects `--release 8` with `error: release version 8 not supported`. Plain `mvn clean package` therefore fails on a machine whose default `java` is 21: `maven-compiler-plugin` compiles in-process using the compiler of whichever JVM Maven itself is running on, so it is `JAVA_HOME`/`java` that decides, **not** the `javac` on `PATH` — a PATH `javac` of 11 does not rescue the build. `mvn -version` reports the JVM actually in use. Add `-o` to build offline once the dependencies are in `~/.m2`.
 
-The build resolves ImageJ/SciJava core artifacts from Maven Central plus the `scijava.public` repository declared in `pom.xml`. `mvn test` runs the suite in `src/test/java` — 192 tests, about 40 s — most of it the filter sweep, no data or Fiji install needed. See **Tests** below.
+The build resolves ImageJ/SciJava core artifacts from Maven Central plus the `scijava.public` repository declared in `pom.xml`. `mvn test` runs the suite in `src/test/java` — 195 tests, about 40 s — most of it the filter sweep, no data or Fiji install needed. See **Tests** below.
 
 `.github/workflows/tests.yml` runs `mvn -B verify` on every pull request and on pushes to `main`. **It pins the JDK to 11 for the reason above** — a runner's default is well past 21, where `--release 8` fails outright, so an unpinned or modernized Java version breaks CI for a reason unrelated to whatever is being tested. Note that for this to fire on pull requests against `TJHaLab/smFRETanalyzer`, the workflow has to be on **that** repository's default branch; a copy on a fork does nothing for upstream pull requests, except on the pull request that introduces it, since GitHub takes workflow definitions from the merge ref.
 
 **Runtime dependency not in `pom.xml`:** the channel mapper requires the [TurboReg](https://imagej.net/plugins/turboreg) plugin (v2.0.1) to be present in the target Fiji/ImageJ installation's plugin path — it's invoked via reflection at runtime, not linked at compile time.
 
-To use the plugin, install the built jar into a Fiji/ImageJ `plugins/` directory alongside TurboReg; the four commands then appear under `Plugins > smFRET`.
+To use the plugin, install the built jar into a Fiji/ImageJ `plugins/` directory alongside TurboReg; the six commands then appear under `Plugins > smFRET`.
+
+## Release
+
+Releases are cut by tagging. Set `<version>` in `pom.xml` to the release version, merge that, then tag `vX.Y.Z` on `main` and push the tag; `.github/workflows/release.yml` builds on JDK 11, runs the suite, and publishes the jar and `examples/hel1.tif` as assets on a GitHub release. Afterwards set the pom to the next `-SNAPSHOT`.
+
+Three things about that workflow are not obvious. **A tag push reads the workflow from the tagged commit**, where a pull request reads it from the merge ref — so the tag has to point at history that already contains `release.yml`, and it has to be pushed to **TJHaLab**, since the release is created in whichever repository the workflow runs in and a tag pushed only to a fork publishes there. It **checks the tag against the pom version before building**, because nothing else connects the two: tagging `v1.2.0` against a 1.1.0 pom would publish a release named 1.2.0 containing `smFRETAnalyzer-1.1.0.jar`. And `examples/hel1.tif` is **committed rather than fetched** — 7.9 MB that never changes — so every tag carries its own copy and a release is reproducible from the tag alone.
 
 ## Tests
 

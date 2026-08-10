@@ -227,9 +227,17 @@ All three analysis plugins require **8, 16 or 32 bit grayscale** images and refu
 
 ## Dependencies ##
 
-* [TurboReg](https://imagej.net/plugins/turboreg)
+* [TurboReg](https://imagej.net/plugins/turboreg), installed into the same Fiji. Only smFRETChannelMapper uses it, and only to fit the affine between the two channels, but without it the first stage cannot run.
+
+Nothing else needs installing. The other libraries the plugin uses — jackson, guava, jhdf5 and commons-math3 — already ship with Fiji.
 
 
 ## Download ##
 
-You can download this plugin [here](https://drive.google.com/drive/folders/192O865s8ed4xjRbJcMlRRvQdlp4nRN1J), along with some sample data.
+Get the latest jar from [the releases page](https://github.com/TJHaLab/smFRETanalyzer/releases/latest).
+
+1. Download `smFRETAnalyzer-<version>.jar`.
+2. Copy it into your Fiji installation's `plugins` folder — `Fiji.app/plugins` on Linux and Windows, `Fiji.app/plugins` inside the application bundle on macOS. If you are upgrading, **delete the old jar first**: two copies both register the same commands.
+3. Restart Fiji. The six commands appear under `Plugins > smFRET`.
+
+Every release also carries `hel1.tif`, a real 30 frame movie to try the pipeline on. [examples/README.md](examples/README.md) says what it is and what order to run things in.
