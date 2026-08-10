@@ -1,0 +1,78 @@
+name: release
+
+# Pushing a v* tag cuts a release: this builds the jar, runs the suite, and publishes both the
+# jar and the example movie as downloadable assets.
+#
+# Unlike tests.yml, which GitHub takes from a pull request's merge ref, a tag push reads the
+# workflow from **the tagged commit itself**. So this file has to already be in the history the
+# tag points at, and the tag has to be pushed to TJHaLab/smFRETanalyzer - the release is created
+# in whichever repository the workflow runs in, so a tag pushed only to a fork publishes there.
+on:
+  push:
+    tags:
+      - 'v*'
+
+# gh release create writes to the repository, and the default token is read-only. If this step
+# ever fails with a 403, it is the repository's Settings > Actions > Workflow permissions, which
+# caps what this key is allowed to ask for.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # JDK 11 for the same reason tests.yml pins it: pom-scijava compiles to Java 8 bytecode to
+      # match the runtime Fiji bundles, and JDK 21 rejects --release 8 outright.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '11'
+          cache: maven
+
+      # The tag names the release and the pom names the jar inside it, and nothing links the two.
+      # Tagging v1.2.0 without bumping the pom would publish a release called 1.2.0 containing
+      # smFRETAnalyzer-1.1.0.jar, which is the kind of thing nobody notices until a user reports
+      # a bug against a version that was never built. Checked before the build so a mistake costs
+      # twenty seconds rather than a full test run.
+      - name: Check the tag matches the pom version
+        id: version
+        run: |
+          pom=$(mvn -B -q --no-transfer-progress help:evaluate \
+              -Dexpression=project.version -DforceStdout)
+          tag=${GITHUB_REF_NAME#v}
+          if [ "$pom" != "$tag" ]; then
+            echo "::error::tag $GITHUB_REF_NAME wants version $tag, but the pom says $pom"
+            exit 1
+          fi
+          echo "version=$pom" >> "$GITHUB_OUTPUT"
+
+      # verify rather than package: a release must not be cuttable with the suite red.
+      - name: Build and test
+        run: mvn -B --no-transfer-progress verify
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+          retention-days: 14
+
+      # --generate-notes writes the commit list since the previous release, which is a starting
+      # point rather than release notes; edit them on the release page afterwards.
+      #
+      # The example movie is committed rather than fetched, so every tag carries its own copy and
+      # a release is reproducible from the tag alone.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes \
+              "target/smFRETAnalyzer-${{ steps.version.outputs.version }}.jar" \
+              "examples/hel1.tif"
