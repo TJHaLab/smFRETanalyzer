@@ -174,6 +174,8 @@ The frames it measures are **the ones spot finding used**, read from the JSON, a
 
 Both panels scale their logarithmic range to the data rather than starting from a fixed floor, so a plot fills its height whatever the wings turn out to hold. The images and the profiles are on the same footing - both border corrected - so a pixel that looks dark in the image agrees with the value the profile reports at that radius.
 
+**A spot near the edge of the frame is measured on the part of its patch that exists**, rather than being thrown away. Rejecting on the frame edge is the same mistake as rejecting on a neighbour, and it gets worse exactly where it hurts: the margin scales with Patch, so on the example data it would discard 3.4% of the spots at Patch 10 and 13.3% at Patch 20 - the setting you reach for when you want to see further out. The missing pixels are masked, the border shrinks with them, and a patch with too little border left is what gets dropped.
+
 **Pixels outside the mapped region are dropped, not measured.** Warping the acceptor onto the donor's frame leaves a band around the edges where there was no source pixel to read, and a patch reaching into it would otherwise carry those gaps in its local background, in its peak and in the average. They are excluded the same way a neighbour's pixels are, and the status line says how many were dropped. This applies to both channels; in practice the donor is unwarped and has none.
 
 Two things about the measurement are worth knowing before reading too much into a number:

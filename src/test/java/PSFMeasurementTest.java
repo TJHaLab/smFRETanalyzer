@@ -311,18 +311,66 @@ class PSFMeasurementTest {
         assertEquals(3, samples.spotsTotal);
     }
 
+    /**
+     * A spot near the frame edge keeps the part of its patch that exists.
+     *
+     * Rejecting on the frame edge is the same mistake as rejecting on a neighbour, and it gets
+     * worse exactly when it hurts most: the guard scales with the patch, so on the example data
+     * it costs 3.4% of the spots at a patch of 10 and 13.3% at 20 - the setting somebody reaches
+     * for when they want to see further out. The missing pixels are masked, the border shrinks,
+     * and the minimum border test decides whether enough is left.
+     */
     @Test
-    @DisplayName("spots too near the frame edge are skipped")
-    void edgeSpotsAreSkipped() {
+    @DisplayName("a spot near the frame edge keeps the part of its patch that exists")
+    void edgeSpotsAreKeptAndMasked() {
         List<double[]> spots = new ArrayList<>();
-        spots.add(new double[] {5, 300});                    // Patch would run off the left.
+        spots.add(new double[] {5, 300});                    // Patch runs off the left.
         spots.add(new double[] {300, FIELD - 6});            // And off the bottom.
-        spots.add(new double[] {300, 300});
+        spots.add(new double[] {300, 300});                  // Comfortably inside.
 
         smFRETPSF.Samples samples = smFRETPSF.extract(field(spots), FIELD, FIELD,
                 asArray(spots), PATCH, NEIGHBOUR_MASK);
 
-        assertEquals(1, samples.spotsUsed);
+        assertEquals(3, samples.spotsUsed, "all three should be measured");
+        assertTrue(samples.invalidPixels > 0,
+                "the pixels off the image should have been counted as absent");
+
+        // A spot whose centre is not on the image at all has no peak to normalise by.
+        List<double[]> offImage = new ArrayList<>();
+        offImage.add(new double[] {-3, 300});
+        offImage.add(new double[] {300, 300});
+        assertEquals(1, smFRETPSF.extract(field(offImage), FIELD, FIELD, asArray(offImage),
+                PATCH, NEIGHBOUR_MASK).spotsUsed, "a spot off the image should be skipped");
+    }
+
+    /**
+     * And the point of keeping them: more spots, same answer. If including the edge biased the
+     * pooled profile - their borders are truncated and one sided, and they sit where a real
+     * illumination profile is falling off - this is where it would show.
+     */
+    @Test
+    @DisplayName("including edge spots adds data without moving the answer")
+    void edgeSpotsDoNotBiasTheResult() {
+        List<double[]> interior = grid(50, 40);
+
+        // The same grid carried out to a margin inside the old patch + 2 guard, so the extra
+        // spots are exactly the ones that used to be thrown away.
+        List<double[]> withEdge = grid(50, 5);
+
+        smFRETPSF.Measurement inner = measure(interior, NEIGHBOUR_MASK);
+        smFRETPSF.Measurement all = measure(withEdge, NEIGHBOUR_MASK);
+
+        assertTrue(all.samples.spotsUsed > inner.samples.spotsUsed,
+                "the edge spots should now be measured: " + all.samples.spotsUsed
+                        + " against " + inner.samples.spotsUsed);
+        assertTrue(all.samples.invalidPixels > 0, "some of their patches run off the image");
+
+        assertEquals(TRUE_SIGMA, all.withPedestal.sigma, 0.08, "sigma with the edge spots in");
+        assertEquals(TRUE_WAVES, all.withPedestal.waves, 0.08, "waves with the edge spots in");
+        assertEquals(inner.withPedestal.sigma, all.withPedestal.sigma, 0.05,
+                "including the edge should not move sigma");
+        assertEquals(inner.withPedestal.waves, all.withPedestal.waves, 0.05,
+                "including the edge should not move waves");
     }
 
     /**

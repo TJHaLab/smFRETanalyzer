@@ -338,6 +338,13 @@ final class smFRETPSF {
      * fitting those returns 1.53 sigma and 0.36 waves where the truth is 1.45 and 0.41. Masking
      * the pixels instead keeps 234 spots and returns 1.49 and 0.41.
      *
+     * **A spot near the frame edge keeps the part of its patch that exists**, rather than being
+     * thrown away. That is the same choice as for neighbours, and for the same reason: the guard
+     * scales with the patch, so rejecting on it costs 3.4% of the spots on the example data at a
+     * patch of 10 and 13.3% at 20 - the setting somebody reaches for precisely when they want to
+     * see further out. The pixels past the frame are dropped, the border shrinks, and the minimum
+     * border test is what decides whether enough is left to be worth measuring.
+     *
      * **Pixels outside the mapped region are dropped along with the contaminated ones.** Warping
      * the acceptor onto the donor's frame leaves a band around the edges where the inverse mapped
      * coordinate falls outside the source, and transformImagePlus writes an exact zero there -
@@ -388,22 +395,24 @@ final class smFRETPSF {
             int cx = (int) spot[0];
             int cy = (int) spot[1];
 
-            // Two pixels of slack past the patch, matching the Python: a patch running to the
-            // very edge of the frame has a border made of frame edge rather than of field.
-            if ((cx < (patch + 2)) || (cx >= (width - patch - 2))
-                    || (cy < (patch + 2)) || (cy >= (height - patch - 2))) {
+            // Only that the spot itself is on the image. Everything else about the frame edge is
+            // handled by masking the pixels that are not there.
+            if ((cx < 0) || (cx >= width) || (cy < 0) || (cy >= height)) {
                 continue;
             }
 
-            // Out of range pixels start excluded rather than being cleared afterwards, so they
-            // are absent from the border median and the peak test as well as from the pool.
+            // Absent pixels start excluded rather than being cleared afterwards, so they are
+            // out of the border median and the peak test as well as out of the pool. Two ways to
+            // be absent: off the image entirely, or inside it but outside the mapped region.
             int dropped = 0;
             for (int dy = 0; dy < size; dy++) {
+                int y = cy - patch + dy;
                 for (int dx = 0; dx < size; dx++) {
-                    boolean mapped =
-                            pixels[(cy - patch + dy) * width + (cx - patch + dx)] != 0.0f;
-                    keep[dy * size + dx] = mapped;
-                    if (!mapped) {
+                    int x = cx - patch + dx;
+                    boolean present = (x >= 0) && (y >= 0) && (x < width) && (y < height)
+                            && (pixels[(y * width) + x] != 0.0f);
+                    keep[dy * size + dx] = present;
+                    if (!present) {
                         dropped++;
                     }
                 }
