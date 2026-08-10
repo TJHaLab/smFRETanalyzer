@@ -139,6 +139,45 @@ The divider between the traces and the images can be dragged. Making the window 
 
 Closing either window closes both.
 
+### smFRETPSFVisualizer
+
+This plugin measures the point spread function in both channels from the spots the field already contains, and shows it four ways: the donor and acceptor PSFs as images, and their radial profiles against a fitted model. It is interactive and writes nothing unless you ask.
+
+Its input is the **spot finder JSON**, the same as smFRETTraceVisualizer - but unlike that one it does **not** need the `.h5`, because a PSF is measured from the field rather than from the traces. So it runs as soon as spot finding has, which is when it is most useful: the PSF is what tells you whether the SpotSigma you analysed with was a sensible choice.
+
+The model is an **Airy pattern with primary spherical aberration**, not a Gaussian, and that is not decoration. Real spots on this data carry several percent of their peak out at 5 to 10 pixels, where a Gaussian of the same core width has fallen to essentially nothing - a factor of 48 at 5 pixels and 10^9 at 10. Those wings are what the background estimator has to cope with and what makes neighbouring molecules contaminate each other. On the example data the fit gives a core of about 1.4 pixels with **0.4 waves of spherical aberration**.
+
+**Neighbouring spots are handled by masking their pixels, not by rejecting their spots.** Throwing away every molecule with a close neighbour is the obvious approach and it does not work on a FRET field, because the field is crowded: it discards most of the data and the survivors still have neighbour light in their wings. Masking out the pixels within a few pixels of any *other* spot keeps nearly the whole field. On a simulated field at real density, masking keeps about 8 times as many spots as whole-spot rejection would.
+
+#### Parameters:
+
+* Spot Finder JSON file - The JSON file written by smFRETSpotFinder.
+
+#### Controls:
+
+* Frames - Which frames to average before measuring. The same keys as the other range sliders: arrows move by one, Page Up and Page Down by a whole interval, Home and End to the ends.
+* Patch - Half width of the square cut around each spot, in pixels. It has to be wide enough to hold the wings the model exists to measure and narrow enough that a crowded field still leaves border pixels around each spot.
+* Neighbour mask - How close to another spot a pixel may be before it is discarded. **Note that a neighbour further away than Patch + Neighbour mask cannot reach a patch pixel at all**, so at the defaults of 10 and 6 nothing beyond 16 pixels is masked, and setting the mask to 0 turns the masking off entirely.
+* Bins - How many radial bins the profile is pooled into.
+* Fit a pedestal - Whether to fit a flat term under the PSF. On the example data this cuts the residual more than fourfold and leaves about 3% of peak, flat from 5 to 10 pixels where any real PSF wing would still be decaying - which looks like a scattered light halo rather than aberration. Run the same measurement on simulated data, which has no halo, and the pedestal comes out near zero, which is what makes the 3% worth believing.
+
+#### Panels:
+
+* *Upper two* - The measured PSF in each channel, pooled over every usable spot, on a **logarithmic** grey scale. Log because on a linear stretch a pattern holding a percent of its peak at eight pixels looks identical to one holding nothing there, which is the distinction the whole plugin is about. Pixels that were masked out in every patch covering them are drawn in blue rather than black, so "nothing measured here" cannot be mistaken for "no light here".
+* *Lower two* - The radial profile of each channel against the fit, also logarithmic. Filled points are the measured profile, hollow grey points behind them are the same profile before the border correction, and the line is the fit. The fitted core width and aberration are printed on each panel and in the status line.
+
+Two things about the measurement are worth knowing before reading too much into a number:
+
+* **The patch border is not background.** An aberrated Airy still holds around 1% of its peak at the edge of a 10 pixel patch, so subtracting the border median takes real light off every point of the profile. That is negligible against the core and large against the wings, so it is corrected - iteratively, because how much light is on the border is a property of the PSF being fitted. The status line says if that correction failed to settle.
+* **The acceptor is measured on the mapped image**, the same one smFRETAnalyzer measures traces from. Mapping interpolates, so the acceptor core reads slightly broader than it truly is. Measuring the unmapped acceptor would give a truer core but at positions nothing else in the pipeline uses.
+
+#### Outputs:
+
+Nothing is written unless you ask for it:
+
+* <image_name>_psf.csv - The radial profiles, corrected and uncorrected, with the fits in the header, via 'Save CSV'.
+* <image_name>_psf.png - The four panels, titled with the file name, via 'Save PNG'.
+
 ## Input requirements ##
 
 The image stack must be a **time series**: one frame per time point, both FRET channels side by side within each frame. ImageJ cannot distinguish a movie from a depth stack saved as a plain TIFF, so a stack with a single non-singleton axis is taken as time whichever way ImageJ labelled it. Images with both depth and time, or with more than one channel, are refused — reduce them with `Image > Hyperstacks > Hyperstack to Stack` first.

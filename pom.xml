@@ -119,6 +119,17 @@
         </dependency>
 
         <!--
+        The Bessel function behind the Airy PSF and the Levenberg-Marquardt behind its fit.
+        Version managed by pom-scijava. Already on the classpath transitively through ImageJ,
+        and declared here anyway because smFRETPSF uses it directly - a transitive dependency
+        is one a BOM bump is free to drop.
+        -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-math3</artifactId>
+        </dependency>
+
+        <!--
         JUnit 5 rather than 4 for @ParameterizedTest: most of what is worth pinning here is
         stated as a property that holds across spot sizes 1.0 to 3.0, and that reads as one
         parameterized case rather than a hand-rolled loop whose first failure hides the rest.
