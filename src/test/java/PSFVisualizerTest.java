@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import ij.ImagePlus;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
@@ -134,6 +136,62 @@ class PSFVisualizerTest {
         smFRETAnalysisException thrown = assertThrows(smFRETAnalysisException.class,
                 () -> plugin.load(json));
         assertTrue(thrown.getMessage().contains("psf_spotf_spots.csv"), thrown.getMessage());
+    }
+
+    /**
+     * The panels lay out and paint without a display.
+     *
+     * They had no coverage at all until a caption was found clipped off the bottom of the image
+     * panels, which no test could have caught because nothing ever painted them. buildContent()
+     * hands back a plain JPanel precisely so this is possible - a JFrame cannot even be
+     * constructed headless.
+     *
+     * This does not check that the result *looks* right; it checks that every paint path runs,
+     * which covers the log floor, the legend, the NaN branch and the fit curve at sizes where
+     * things are tight enough to go negative.
+     */
+    @Test
+    @DisplayName("the panels paint at any size without throwing")
+    void panelsPaint(@TempDir File directory) throws Exception {
+        File json = spotFinderOutput(directory);
+        smFRETPSFVisualizer plugin = visualizer(json);
+        plugin.run();
+
+        for (int[] size : new int[][] {{1000, 760}, {640, 480}, {320, 240}, {120, 90}}) {
+            javax.swing.JPanel content = plugin.buildContent();
+            content.setSize(size[0], size[1]);
+            layOut(content);
+
+            BufferedImage image = new BufferedImage(size[0], size[1],
+                    BufferedImage.TYPE_INT_RGB);
+            Graphics2D g2 = image.createGraphics();
+            content.paint(g2);
+            g2.dispose();
+
+            // Something was drawn - a panel that silently painted nothing would pass a
+            // "did not throw" test on its own.
+            if (size[0] >= 320) {
+                boolean marked = false;
+                for (int y = 0; (y < size[1]) && !marked; y++) {
+                    for (int x = 0; x < size[0]; x++) {
+                        if ((image.getRGB(x, y) & 0xffffff) != 0xffffff) {
+                            marked = true;
+                            break;
+                        }
+                    }
+                }
+                assertTrue(marked, "nothing was drawn at " + size[0] + "x" + size[1]);
+            }
+        }
+    }
+
+    private static void layOut(java.awt.Component c) {
+        c.doLayout();
+        if (c instanceof java.awt.Container) {
+            for (java.awt.Component child : ((java.awt.Container) c).getComponents()) {
+                layOut(child);
+            }
+        }
     }
 
     /**

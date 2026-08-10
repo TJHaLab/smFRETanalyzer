@@ -83,6 +83,7 @@ public class smFRETPSFVisualizer implements Command {
     private final smFRETSpotFinder smfsf = new smFRETSpotFinder();
     private double[][] spots;
     private double spotSigma = 2.0;
+    private JPanel plotPanels;
     private JLabel statusLabel;
     private boolean suspendUpdates = false;
 
@@ -209,7 +210,9 @@ public class smFRETPSFVisualizer implements Command {
             return;
         }
         try {
-            frame.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+            if (frame != null) {
+                frame.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+            }
 
             int patch = ((Number) patchSpinner.getValue()).intValue();
             double mask = ((Number) maskSpinner.getValue()).doubleValue();
@@ -231,7 +234,9 @@ public class smFRETPSFVisualizer implements Command {
             log.info(e);
             statusLabel.setText("measurement failed: " + e.getMessage());
         } finally {
-            frame.setCursor(Cursor.getDefaultCursor());
+            if (frame != null) {
+                frame.setCursor(Cursor.getDefaultCursor());
+            }
         }
     }
 
@@ -329,15 +334,21 @@ public class smFRETPSFVisualizer implements Command {
             double[] image = measurement.correctedImage();
 
             double smallest = Double.MAX_VALUE;
+            int unmeasured = 0;
             for (double value : image) {
-                if (!Double.isNaN(value) && (value > 0.0)) {
+                if (Double.isNaN(value)) {
+                    unmeasured++;
+                } else if (value > 0.0) {
                     smallest = Math.min(smallest, value);
                 }
             }
             double floor = floorFor(smallest);
 
+            // Room for the title above and the scale caption below. Leaving the caption out of
+            // this is what clipped it off the bottom of the panel.
             int titleHeight = 20;
-            int side = Math.min(getWidth() - 12, getHeight() - 12 - titleHeight);
+            int captionHeight = 18;
+            int side = Math.min(getWidth() - 12, getHeight() - 12 - titleHeight - captionHeight);
             if (side < 20) {
                 g2.dispose();
                 return;
@@ -376,8 +387,14 @@ public class smFRETPSFVisualizer implements Command {
 
             g2.setFont(g2.getFont().deriveFont(Font.PLAIN, 10.0f));
             g2.setColor(Color.GRAY);
-            g2.drawString(String.format("%d px across, log scale %.0e to 1", size, floor),
-                    left, top + side + 12);
+            // The blue is only mentioned when there is some. On a field of a few hundred spots
+            // every offset in the patch picks up a contribution from something and there are
+            // none at all, so a permanent note about them would be a permanent puzzle.
+            String caption = String.format("%d px across, log scale %.0e to 1", size, floor);
+            if (unmeasured > 0) {
+                caption += String.format(" · %d px unmeasured (blue)", unmeasured);
+            }
+            g2.drawString(caption, left, top + side + 12);
 
             g2.dispose();
         }
@@ -535,7 +552,74 @@ public class smFRETPSFVisualizer implements Command {
                         MARGIN_LEFT + width - 150, MARGIN_TOP + 2);
             }
 
+            drawLegend(g2, measured, fit, width, height);
             g2.dispose();
+        }
+
+        /**
+         * What the two kinds of circle are, which is not guessable from the plot.
+         *
+         * Bottom left, because the profile runs from top left to bottom right and that corner is
+         * the one it never reaches. Drawn last, over a panel-coloured box, so a curve that does
+         * stray into it does not read through the text.
+         */
+        private void drawLegend(Graphics2D g2, Color measured, smFRETPSF.Fit fit,
+                                int width, int height) {
+            boolean showPedestal = (fit != null) && pedestalBox.isSelected()
+                    && (fit.pedestal > floor);
+
+            java.util.List<String> labels = new java.util.ArrayList<>();
+            labels.add("measured");
+            labels.add("before border correction");
+            labels.add("fit");
+            if (showPedestal) {
+                labels.add("pedestal");
+            }
+
+            g2.setFont(g2.getFont().deriveFont(Font.PLAIN, 10.0f));
+            FontMetrics metrics = g2.getFontMetrics();
+            int textWidth = 0;
+            for (String label : labels) {
+                textWidth = Math.max(textWidth, metrics.stringWidth(label));
+            }
+
+            int rowHeight = metrics.getHeight();
+            int boxWidth = textWidth + 30;
+            int boxHeight = (rowHeight * labels.size()) + 8;
+            int left = MARGIN_LEFT + 6;
+            int top = MARGIN_TOP + height - boxHeight - 6;
+
+            // Not fully opaque: the legend should never be the reason a data point is invisible.
+            g2.setColor(new Color(255, 255, 255, 215));
+            g2.fillRect(left, top, boxWidth, boxHeight);
+            g2.setColor(new Color(205, 205, 205));
+            g2.drawRect(left, top, boxWidth, boxHeight);
+
+            int markerX = left + 12;
+            int y = top + 4 + metrics.getAscent();
+            for (String label : labels) {
+                int markerY = y - (metrics.getAscent() / 2) + 1;
+                if ("measured".equals(label)) {
+                    g2.setColor(measured);
+                    g2.fillOval(markerX - 3, markerY - 3, 6, 6);
+                } else if ("before border correction".equals(label)) {
+                    g2.setColor(RAW_COLOR);
+                    g2.drawOval(markerX - 3, markerY - 3, 6, 6);
+                } else if ("fit".equals(label)) {
+                    g2.setColor(FIT_COLOR);
+                    g2.setStroke(new BasicStroke(1.6f));
+                    g2.drawLine(markerX - 6, markerY, markerX + 6, markerY);
+                    g2.setStroke(new BasicStroke(1.0f));
+                } else {
+                    g2.setColor(new Color(FIT_COLOR.getRed(), FIT_COLOR.getGreen(),
+                            FIT_COLOR.getBlue(), 120));
+                    g2.drawLine(markerX - 6, markerY, markerX + 6, markerY);
+                }
+
+                g2.setColor(Color.DARK_GRAY);
+                g2.drawString(label, markerX + 12, y);
+                y += rowHeight;
+            }
         }
     }
 
@@ -546,6 +630,22 @@ public class smFRETPSFVisualizer implements Command {
         frame = new JFrame("smFRET PSF - " + new File(root).getName());
         frame.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
 
+        frame.getContentPane().add(buildContent(), BorderLayout.CENTER);
+        frame.pack();
+        frame.setLocationRelativeTo(null);
+        frame.setVisible(true);
+
+        update();
+    }
+
+    /**
+     * Everything inside the window, as one panel, with no window around it.
+     *
+     * Separate from show() because a JPanel can be laid out and painted with no display, where a
+     * JFrame cannot be constructed at all - so this is what lets the four panels be rendered and
+     * looked at from a headless test. It is also the unit the PNG export captures.
+     */
+    JPanel buildContent() {
         JPanel panels = new JPanel(new GridLayout(2, 2, 4, 4));
         for (int c = 0; c < 2; c++) {
             imagePanel[c] = new PsfImagePanel(c);
@@ -656,13 +756,12 @@ public class smFRETPSFVisualizer implements Command {
         bottom.add(captions, BorderLayout.CENTER);
         bottom.add(buttons, BorderLayout.SOUTH);
 
-        frame.getContentPane().add(panels, BorderLayout.CENTER);
-        frame.getContentPane().add(bottom, BorderLayout.SOUTH);
-        frame.pack();
-        frame.setLocationRelativeTo(null);
-        frame.setVisible(true);
+        plotPanels = panels;
 
-        update();
+        JPanel content = new JPanel(new BorderLayout());
+        content.add(panels, BorderLayout.CENTER);
+        content.add(bottom, BorderLayout.SOUTH);
+        return content;
     }
 
     /**
@@ -735,7 +834,7 @@ public class smFRETPSFVisualizer implements Command {
         }
 
         try {
-            Container panels = (Container) frame.getContentPane().getComponent(0);
+            Container panels = plotPanels;
             int titleHeight = 28;
             BufferedImage image = new BufferedImage(panels.getWidth(),
                     panels.getHeight() + titleHeight + 36, BufferedImage.TYPE_INT_RGB);
