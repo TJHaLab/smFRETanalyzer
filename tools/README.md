@@ -7,6 +7,11 @@ these.
 
 Nothing here is part of the plugin. The Maven build ignores this directory.
 
+These are not the test suite, and the two do different jobs. `src/test/java` pins the constants
+and the arithmetic against known answers on generated fields, in ten seconds and with no data —
+it tells you something *broke*. The sweeps here tell you what a constant should *be*, which needs
+hours and large simulated movies. Re-derive with these; guard with those.
+
 ## Requirements
 
 Python 3 with `numpy`, `scipy` and `tifffile`, and a built plugin plus its dependency classpath:

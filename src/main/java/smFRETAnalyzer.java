@@ -71,7 +71,7 @@ public class smFRETAnalyzer implements Command {
     private final boolean isHeadless = GraphicsEnvironment.isHeadless();
     private String saveRootName;
     private final boolean saveAsTraces = true;
-    private final smFRETSpotFinder smfsf = new smFRETSpotFinder();
+    final smFRETSpotFinder smfsf = new smFRETSpotFinder();
 
     /**
      * Stack background estimation.
@@ -234,7 +234,7 @@ public class smFRETAnalyzer implements Command {
      * frame. Accumulated in double: a float sum drifts over the thousands of add-and-subtract
      * rounds a long movie needs.
      */
-    private ImageStack temporalMean(ImageStack stack, int windowFrames) {
+    ImageStack temporalMean(ImageStack stack, int windowFrames) {
         int width = stack.getWidth();
         int height = stack.getHeight();
         int depth = stack.size();
@@ -281,11 +281,11 @@ public class smFRETAnalyzer implements Command {
      * of the pipeline reads as imglib2, so there is no conversion around it. The copy is what
      * makes it safe to hand this a processor belonging to a stack.
      */
-    private static smFRETSpotFinder.Shared smoothed(ImagePlus image, double sigma) {
+    static smFRETSpotFinder.Shared smoothed(ImagePlus image, double sigma) {
         return smoothed(image.getProcessor(), sigma);
     }
 
-    private static smFRETSpotFinder.Shared smoothed(ImageProcessor image, double sigma) {
+    static smFRETSpotFinder.Shared smoothed(ImageProcessor image, double sigma) {
         smFRETSpotFinder.Shared source = new smFRETSpotFinder.Shared(
                 (FloatProcessor) image.convertToFloatProcessor().duplicate());
         smFRETSpotFinder.Shared blurred = new smFRETSpotFinder.Shared(source.width, source.height);

@@ -1,0 +1,60 @@
+name: tests
+
+# Runs on every pull request whatever its base, and on pushes to main. For this to fire on
+# pull requests against TJHaLab/smFRETanalyzer the workflow has to be on *that* repository's
+# default branch - a copy living only on a fork does nothing for upstream pull requests. The
+# pull request that adds it is the exception, since GitHub takes workflow definitions from the
+# merge ref, so this file runs on the pull request that introduces it.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A second push to the same branch makes the first run irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # JDK 11, and the version is the one thing here that is not a matter of taste.
+      #
+      # pom-scijava sets maven.compiler.release to 8, matching the Java 8 runtime Fiji bundles,
+      # and JDK 21 removed support for --release 8 - it fails outright with "release version 8
+      # not supported". A runner's default JDK is well past that, so leaving this unpinned, or
+      # pinning it to something current, breaks the build for a reason that has nothing to do
+      # with the change being tested.
+      #
+      # maven-compiler-plugin compiles in process using the compiler of whichever JVM Maven is
+      # running on, so it is this that decides, not any javac on the PATH.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
+          cache: maven
+
+      # verify rather than test: it runs the same suite and then packages, so a break in the
+      # jar assembly is caught here rather than at release. Checked to pass cleanly - the
+      # enforcer, jacoco and packaging steps pom-scijava binds are all satisfied.
+      #
+      # TurboReg is deliberately absent. It is a runtime dependency of the channel mapper only,
+      # installed into a Fiji plugins directory rather than resolved by Maven, and the suite
+      # does not exercise the one method that reflects into it.
+      - name: Build and test
+        run: mvn -B --no-transfer-progress verify
+
+      # The surefire XML says which assertion failed and with what numbers, which the log tail
+      # usually truncates away - and most of these tests report a measured value in their
+      # message, so that detail is the whole diagnosis.
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+          retention-days: 14

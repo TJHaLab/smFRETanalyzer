@@ -148,7 +148,7 @@ public class smFRETSpotFinder implements Command, Interactive {
     private static final double spotMarginScale = 2.5;
     private static final int spotMarginFloor = 2;
 
-    private int spotMargin() {
+    int spotMargin() {
         return spotMarginFor(spotSigma);
     }
 
@@ -264,7 +264,7 @@ public class smFRETSpotFinder implements Command, Interactive {
     // How many frames actually went into the average, after averageImagePlus has clamped the
     // requested range to the movie. The prominence filter needs it to know how far the temporal
     // average has taken the noise down.
-    private int cachedFrames;
+    int cachedFrames;
 
     // The displayed QC image, kept so that repeated runs update one window instead of opening one
     // window per run.
@@ -496,15 +496,15 @@ public class smFRETSpotFinder implements Command, Interactive {
         }
     }
 
-    private static double cachedKappa = Double.NaN;
-    private static double cachedMeanOffset;
-    private static double cachedMadFactor;
+    static double cachedKappa = Double.NaN;
+    static double cachedMeanOffset;
+    static double cachedMadFactor;
 
     /**
      * Normal CDF, via Abramowitz and Stegun 7.1.26. Good to about 1e-7, which is far past what
      * a clipping correction needs.
      */
-    private static double normalCdf(double x) {
+    static double normalCdf(double x) {
         double z = x / Math.sqrt(2.0);
         double sign = (z < 0.0) ? -1.0 : 1.0;
         double a = Math.abs(z);
@@ -515,12 +515,12 @@ public class smFRETSpotFinder implements Command, Interactive {
         return 0.5 * (1.0 + erf);
     }
 
-    private static double normalPdf(double x) {
+    static double normalPdf(double x) {
         return Math.exp(-0.5 * x * x) / Math.sqrt(2.0 * Math.PI);
     }
 
     /** Smallest x with normalCdf(x) >= p, by bisection. */
-    private static double normalQuantile(double p) {
+    static double normalQuantile(double p) {
         double lo = -10.0;
         double hi = 10.0;
         for (int i = 0; i < 80; i++) {
@@ -550,7 +550,7 @@ public class smFRETSpotFinder implements Command, Interactive {
      * Both reduce to their untruncated values as kappa grows: the offset to zero, the MAD factor to
      * 1.4826 * 0.6745 = 1.
      */
-    private static void truncationConstants(double kappa) {
+    static void truncationConstants(double kappa) {
         if (kappa == cachedKappa) {
             return;
         }
@@ -619,7 +619,7 @@ public class smFRETSpotFinder implements Command, Interactive {
      * by distance, whether or not it was kept itself. That fills the spots and the edges in
      * one pass, which is what the two separate inpainting passes used to do.
      */
-    private Shared maskedSmooth(Shared image, boolean[] keep, double sigma, float[] scratch) {
+    Shared maskedSmooth(Shared image, boolean[] keep, double sigma, float[] scratch) {
         Shared weighted = new Shared(image.width, image.height);
         Shared total = new Shared(image.width, image.height);
 
@@ -680,7 +680,7 @@ public class smFRETSpotFinder implements Command, Interactive {
      * the other. Blocks that hang off the right or bottom edge are simply short, which the
      * weight image already accounts for.
      */
-    private static void smoothDecimated(Shared image, double sigma, int decimation, Shared target) {
+    static void smoothDecimated(Shared image, double sigma, int decimation, Shared target) {
         Shared binned = bin(image, decimation);
         Shared smoothed = new Shared(binned.width, binned.height);
         gauss(sigma / decimation, Views.extendZero(binned.img), smoothed.img);
@@ -690,7 +690,7 @@ public class smFRETSpotFinder implements Command, Interactive {
     /**
      * Sum each decimation by decimation block of pixels into one.
      */
-    private static Shared bin(Shared image, int decimation) {
+    static Shared bin(Shared image, int decimation) {
         Shared binned = new Shared(
                 (image.width + decimation - 1) / decimation,
                 (image.height + decimation - 1) / decimation);
@@ -711,7 +711,7 @@ public class smFRETSpotFinder implements Command, Interactive {
      * point the binned pixel actually stands for - is half a block in from its corner. Ignoring
      * that offset would shift the whole background estimate by (decimation - 1) / 2 pixels.
      */
-    private static void unbin(Shared binned, int decimation, Shared target) {
+    static void unbin(Shared binned, int decimation, Shared target) {
         int width = target.width;
         int height = target.height;
 
@@ -752,7 +752,7 @@ public class smFRETSpotFinder implements Command, Interactive {
      *
      * Positions off either end clamp to the last sample, matching extendBorder.
      */
-    private static void interpolationWeights(int size, int binnedSize, int decimation,
+    static void interpolationWeights(int size, int binnedSize, int decimation,
                                              int[] lower, int[] upper, float[] weight) {
         double centre = 0.5 * (decimation - 1);
         for (int p = 0; p < size; p++) {
@@ -778,7 +778,7 @@ public class smFRETSpotFinder implements Command, Interactive {
      * The ordinary standard deviation of a contaminated sample is inflated by exactly the pixels
      * being looked for, which would make the clip too loose to catch them.
      */
-    private double robustSpread(float[] values, float[] level, boolean[] keep, float[] scratch) {
+    double robustSpread(float[] values, float[] level, boolean[] keep, float[] scratch) {
         int count = 0;
         for (int i = 0; i < keep.length; i++) {
             if (keep[i]) {
@@ -799,7 +799,7 @@ public class smFRETSpotFinder implements Command, Interactive {
     /**
      * Median of the kept entries of values. Uses scratch as working space.
      */
-    private double subsetMedian(float[] values, boolean[] keep, float[] scratch) {
+    double subsetMedian(float[] values, boolean[] keep, float[] scratch) {
         int count = 0;
         for (int i = 0; i < keep.length; i++) {
             if (keep[i]) {
@@ -818,7 +818,7 @@ public class smFRETSpotFinder implements Command, Interactive {
      * routines leave the same multiset behind, which is what robustSpread relies on when it reuses
      * the scratch array for the absolute deviations.
      */
-    private static double median(float[] values, int count) {
+    static double median(float[] values, int count) {
         int middle = count / 2;
         double high = select(values, count, middle);
         if ((count % 2) != 0) {
@@ -841,7 +841,7 @@ public class smFRETSpotFinder implements Command, Interactive {
      * gives the same work, so a run is reproducible - and keeps sorted or nearly sorted input,
      * which is the pathological case for a naive pivot, away from quadratic.
      */
-    private static float select(float[] values, int count, int k) {
+    static float select(float[] values, int count, int k) {
         int low = 0;
         int high = count - 1;
 
@@ -883,7 +883,7 @@ public class smFRETSpotFinder implements Command, Interactive {
     /**
      * Count the number of good spots.
      */
-    private int countGoodSpots(double[][] spots){
+    int countGoodSpots(double[][] spots){
         int numGoodSpots = 0;
 
         for (int i=0; i < spots.length; i++) {
@@ -900,7 +900,7 @@ public class smFRETSpotFinder implements Command, Interactive {
      *
      * Spots on the pixels where this image is <= overlapThreshold are filtered out.
      */
-    private ImagePlus createOverlapMask (int imageWidth, int imageHeight){
+    ImagePlus createOverlapMask (int imageWidth, int imageHeight){
         // If you use 16 bit images they don't get auto-scaled when converted back from float32, but 8
         // bit images do, why IDK. TurboReg, as used by smFRETChannelMapper splitImagePlut() method,
         // converts images to float32 when it transforms them.
@@ -933,7 +933,7 @@ public class smFRETSpotFinder implements Command, Interactive {
      *
      * Spots on the pixels where this image is > 1 are filtered out.
      */
-    private ImagePlus createSpotsNeighborhoodMask(double[][] spots, int imageWidth, int imageHeight, int radius){
+    ImagePlus createSpotsNeighborhoodMask(double[][] spots, int imageWidth, int imageHeight, int radius){
         Shared neighborhoodMask = new Shared(imageWidth, imageHeight);
 
         // One spot at a time into a scratch image, then accumulated - the count of overlapping
@@ -962,7 +962,7 @@ public class smFRETSpotFinder implements Command, Interactive {
      *
      * The first element for each spot is whether it passes the current filters.
      */
-    private double[][] getMaxima(ImagePlus image){
+    double[][] getMaxima(ImagePlus image){
         ImageProcessor imageProc = image.getProcessor();
         MaximumFinder mf = new MaximumFinder();
         Polygon spotsPoly = mf.getMaxima(imageProc, spotTolerance, true);
@@ -1091,14 +1091,14 @@ public class smFRETSpotFinder implements Command, Interactive {
     /**
      * converts neighborhood mask for use as a background mask.
      */
-    private ImagePlus neighborhoodMaskToBackgroundMask(ImagePlus neighborhoodMask) {
+    ImagePlus neighborhoodMaskToBackgroundMask(ImagePlus neighborhoodMask) {
         return invertNeighborhoodMask(neighborhoodMask, "foreground_mask", 0.0f);
     }
 
     /**
      * converts neighborhood mask for use to detect spots that are too close to each other.
      */
-    private ImagePlus neighborhoodMaskToProximityMask(ImagePlus neighborhoodMask) {
+    ImagePlus neighborhoodMaskToProximityMask(ImagePlus neighborhoodMask) {
         return invertNeighborhoodMask(neighborhoodMask, "overlap_mask", 1.0f);
     }
 
@@ -1176,7 +1176,7 @@ public class smFRETSpotFinder implements Command, Interactive {
      * their true ratio. On hel1 that rejected 52% of spots at SNR 15-25 against 16% below 10.
      * A ring at or below zero is now simply taken as "nothing there, so no neighbour".
      */
-    private double[][] spotFilterProminence(double[][] spots, ImagePlus sumImage, ImagePlus backgroundImage) {
+    double[][] spotFilterProminence(double[][] spots, ImagePlus sumImage, ImagePlus backgroundImage) {
         double[][] filteredSpots = new double[spots.length][spots[0].length+1];
         int last_col = filteredSpots[0].length-1;
 
@@ -1226,7 +1226,7 @@ public class smFRETSpotFinder implements Command, Interactive {
     /**
      * Pixel offsets of the prominence ring: a thin annulus at two sigma.
      */
-    private int[][] prominenceRing() {
+    int[][] prominenceRing() {
         double radius = 2.0*spotSigma;
         int reach = (int) Math.ceil(radius + promRingHalfWidth);
 
@@ -1248,7 +1248,7 @@ public class smFRETSpotFinder implements Command, Interactive {
      * so the two cancel exactly and a perfect lone spot scores 1.0 - rather than being a constant
      * that would have to be kept in step with the ring geometry by hand.
      */
-    private double idealProminence(int[][] ring) {
+    double idealProminence(int[][] ring) {
         float[] profile = new float[ring.length];
         for (int i = 0; i < ring.length; i++) {
             double r2 = ring[i][0]*ring[i][0] + ring[i][1]*ring[i][1];
@@ -1264,7 +1264,7 @@ public class smFRETSpotFinder implements Command, Interactive {
      * 16 to 40 values and this runs once per spot rather than once per pixel, so the selection
      * would save nothing, and interpolating wants both neighbours rather than one.
      */
-    private static double percentile90(float[] values) {
+    static double percentile90(float[] values) {
         float[] sorted = values.clone();
         java.util.Arrays.sort(sorted);
 
@@ -1281,7 +1281,7 @@ public class smFRETSpotFinder implements Command, Interactive {
      * being found in - two for the sum, one for a single channel - since that is how many black
      * levels the background carries.
      */
-    private double[][] spotFilterSNR(double[][] spots, ImagePlus sumImage, ImagePlus backgroundImage){
+    double[][] spotFilterSNR(double[][] spots, ImagePlus sumImage, ImagePlus backgroundImage){
         double[][] filteredSpots = new double[spots.length][spots[0].length+1];
         int last_col = filteredSpots[0].length-1;
 
@@ -1352,7 +1352,7 @@ public class smFRETSpotFinder implements Command, Interactive {
      * With the sum now float rather than 8 bit, negatives survive instead of clamping at zero and
      * bright pixels are no longer pinned at 255.
      */
-    private Shared foreground(ImagePlus sumImage, ImagePlus backgroundImage) {
+    Shared foreground(ImagePlus sumImage, ImagePlus backgroundImage) {
         RandomAccessibleInterval<FloatType> sum = ImageJFunctions.convertFloat(sumImage);
         RandomAccessibleInterval<FloatType> background = ImageJFunctions.convertFloat(backgroundImage);
 
@@ -1370,7 +1370,7 @@ public class smFRETSpotFinder implements Command, Interactive {
      * any more regardless: on a float image getPixel returns the raw bits of the float, not the
      * value.
      */
-    private static float valueAt(Shared image, int x, int y) {
+    static float valueAt(Shared image, int x, int y) {
         if ((x < 0) || (y < 0) || (x >= image.width) || (y >= image.height)) {
             return 0.0f;
         }
@@ -1380,7 +1380,7 @@ public class smFRETSpotFinder implements Command, Interactive {
     /**
      * Mark spots where mask is 0.
      */
-    private double[][] spotFilterWithMask(double[][]  spots, ImagePlus mask){
+    double[][] spotFilterWithMask(double[][]  spots, ImagePlus mask){
         double[][] filteredSpots = new double[spots.length][spots[0].length];
         for (int i = 0; i < spots.length; i++) {
             System.arraycopy(spots[i], 0, filteredSpots[i], 0, spots[i].length);
@@ -1490,7 +1490,7 @@ public class smFRETSpotFinder implements Command, Interactive {
      * Handing back the cached half itself would be quicker by a fraction of a millisecond and
      * would let anything downstream that ever wrote to it corrupt the cache.
      */
-    private Shared channelImage() {
+    Shared channelImage() {
         Shared out = new Shared(cachedTarget.width, cachedTarget.height);
         if ("donor".equals(spotChannel)) {
             System.arraycopy(cachedTarget.pixels, 0, out.pixels, 0, out.pixels.length);
@@ -1510,7 +1510,7 @@ public class smFRETSpotFinder implements Command, Interactive {
      * background before taking its square root, so getting it wrong on a single channel would
      * over-subtract a whole black level - 5 ADU on the example data - and shift every SNR.
      */
-    private int channelCount() {
+    int channelCount() {
         return "sum".equals(spotChannel) ? 2 : 1;
     }
 

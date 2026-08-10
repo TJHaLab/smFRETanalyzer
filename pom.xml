@@ -70,6 +70,18 @@
         <license.licenseName>unlicense</license.licenseName>
         <license.copyrightOwners>N/A</license.copyrightOwners>
         <license.projectName>ImageJ software for multidimensional image processing and analysis.</license.projectName>
+
+        <!--
+        Tests run headless, and that is not optional. Every plugin here captures
+        GraphicsEnvironment.isHeadless() into a final field at construction and takes the
+        ui.show() branch when it is false - on a UIService the tests never inject, so a
+        windowed test run reaches a null service instead of skipping the display.
+
+        The memory bump is over pom-scijava's -Xmx512m, which is not enough for a synthetic
+        movie held as float alongside its background estimate. This property is appended after
+        that flag in the inherited argLine, and the last -Xmx wins.
+        -->
+        <scijava.surefire.args>-Xmx2g -Djava.awt.headless=true</scijava.surefire.args>
     </properties>
 
     <repositories>
@@ -104,6 +116,31 @@
             <artifactId>jhdf5</artifactId>
             <version>19.04.0</version>
             <scope>compile</scope>
+        </dependency>
+
+        <!--
+        JUnit 5 rather than 4 for @ParameterizedTest: most of what is worth pinning here is
+        stated as a property that holds across spot sizes 1.0 to 3.0, and that reads as one
+        parameterized case rather than a hand-rolled loop whose first failure hides the rest.
+
+        The three artifacts are listed separately because pom-scijava manages api, engine and
+        params but *not* the junit-jupiter aggregate, so depending on the aggregate is a
+        missing-version error rather than the one-liner it looks like it should be.
+        -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-params</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 </project>
