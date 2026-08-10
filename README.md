@@ -160,6 +160,7 @@ The frames it measures are **the ones spot finding used**, read from the JSON, a
 * Patch - Half width of the square cut around each spot, in pixels. It has to be wide enough to hold the wings the model exists to measure and narrow enough that a crowded field still leaves border pixels around each spot.
 * Neighbour mask - How close to another spot a pixel may be before it is discarded. **Note that a neighbour further away than Patch + Neighbour mask cannot reach a patch pixel at all**, so at the defaults of 10 and 6 nothing beyond 16 pixels is masked, and setting the mask to 0 turns the masking off entirely.
 * Bins - How many radial bins the profile is pooled into.
+* Image scale - Whether the two images above map intensity to grey **linearly** or **logarithmically**. Linear is the default and is the honest one for judging whether something is large: everything past the core is nearly black, because it genuinely is a percent or two of the peak. Log spreads each decade over the same range of grey, which is what makes the wings visible at all - the whole reason for an aberrated model - but it magnifies small absolute differences down there, so structure in the wings can look far more serious than it is. The profile plots below are always logarithmic.
 * Fit a pedestal - Whether to fit a flat term under the PSF. On the example data this cuts the residual more than fourfold and leaves about 3% of peak, flat from 5 to 10 pixels where any real PSF wing would still be decaying - which looks like a scattered light halo rather than aberration. Run the same measurement on simulated data, which has no halo, and the pedestal comes out near zero, which is what makes the 3% worth believing.
 
 #### Panels:
@@ -172,6 +173,8 @@ The frames it measures are **the ones spot finding used**, read from the JSON, a
 * *Lower two* - The radial profile of each channel against the fit, also logarithmic. Filled points are the measured profile, hollow grey points behind them are the same profile before the border correction, and the line is the fit. The fitted core width and aberration are printed on each panel and in the status line, and the model being fitted is named under the plots.
 
 Both panels scale their logarithmic range to the data rather than starting from a fixed floor, so a plot fills its height whatever the wings turn out to hold. The images and the profiles are on the same footing - both border corrected - so a pixel that looks dark in the image agrees with the value the profile reports at that radius.
+
+**Pixels outside the mapped region are dropped, not measured.** Warping the acceptor onto the donor's frame leaves a band around the edges where there was no source pixel to read, and a patch reaching into it would otherwise carry those gaps in its local background, in its peak and in the average. They are excluded the same way a neighbour's pixels are, and the status line says how many were dropped. This applies to both channels; in practice the donor is unwarped and has none.
 
 Two things about the measurement are worth knowing before reading too much into a number:
 

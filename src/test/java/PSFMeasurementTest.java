@@ -418,6 +418,75 @@ class PSFMeasurementTest {
     }
 
     /**
+     * Pixels outside the mapped region are dropped, not measured.
+     *
+     * Warping the acceptor onto the donor's frame leaves a band where the inverse mapped
+     * coordinate falls outside the source, and transformImagePlus writes an exact zero there -
+     * the same sentinel createOverlapMask reads. A patch reaching into that band would otherwise
+     * carry those zeros in its border median, in its peak and in the pool, all of which read the
+     * PSF too low. On hel1 the band is 1.5% of the acceptor half and three patches touch it.
+     *
+     * The test runs on both halves in the real thing; nothing about it is acceptor specific.
+     */
+    @Test
+    @DisplayName("pixels outside the mapped region are excluded and counted")
+    void unmappedPixelsAreExcluded() {
+        List<double[]> spots = grid(50, 40);
+        float[] pixels = field(spots);
+
+        smFRETPSF.Samples clean = smFRETPSF.extract(pixels, FIELD, FIELD, asArray(spots),
+                PATCH, NEIGHBOUR_MASK);
+        assertEquals(0, clean.invalidPixels, "the fixture starts with nothing unmapped");
+
+        // A band down one side, as a warp leaves. It reaches into the patches of the spots in
+        // the first column, whose centres sit at x = 40.
+        float[] banded = pixels.clone();
+        for (int y = 0; y < FIELD; y++) {
+            for (int x = 0; x < 35; x++) {
+                banded[y * FIELD + x] = 0.0f;
+            }
+        }
+
+        smFRETPSF.Samples masked = smFRETPSF.extract(banded, FIELD, FIELD, asArray(spots),
+                PATCH, NEIGHBOUR_MASK);
+        assertTrue(masked.invalidPixels > 0,
+                "the band should have been noticed; counted " + masked.invalidPixels);
+
+        // Every spot survives - the band eats part of some patches, not the spots themselves,
+        // which is the same choice the neighbour masking makes.
+        assertEquals(clean.spotsUsed, masked.spotsUsed,
+                "spots should be kept and their unmapped pixels dropped");
+
+        // And the answer is unmoved, which is the point: the zeros are gone rather than averaged.
+        smFRETPSF.Measurement before = smFRETPSF.analyse(clean, BINS);
+        smFRETPSF.Measurement after = smFRETPSF.analyse(masked, BINS);
+        assertEquals(before.withPedestal.sigma, after.withPedestal.sigma, 0.03, "sigma");
+        assertEquals(before.withPedestal.waves, after.withPedestal.waves, 0.03, "waves");
+    }
+
+    /**
+     * A spot standing *in* the unmapped band has no peak to normalise by, so it goes entirely.
+     */
+    @Test
+    @DisplayName("a spot inside the unmapped band is skipped")
+    void spotsInsideTheBandAreSkipped() {
+        List<double[]> spots = new ArrayList<>();
+        spots.add(new double[] {60, 300});
+        spots.add(new double[] {300, 300});
+
+        float[] pixels = field(spots);
+        for (int y = 0; y < FIELD; y++) {
+            for (int x = 0; x < 70; x++) {
+                pixels[y * FIELD + x] = 0.0f;
+            }
+        }
+
+        smFRETPSF.Samples samples = smFRETPSF.extract(pixels, FIELD, FIELD, asArray(spots),
+                PATCH, NEIGHBOUR_MASK);
+        assertEquals(1, samples.spotsUsed, "only the spot outside the band should be usable");
+    }
+
+    /**
      * Pixels no spot could contribute to are NaN rather than zero, so a display can tell "nothing
      * measured here" from "no light here" - on a crowded field at a large mask those are very
      * different statements.

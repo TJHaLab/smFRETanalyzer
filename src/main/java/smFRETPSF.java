@@ -225,6 +225,7 @@ final class smFRETPSF {
         final int[] imageCount;         // How many spots contributed to each pixel.
         final double[] imagePeak;       // Sum of the contributing spots' peaks, per pixel.
         final double[] imageValue;      // Sum of their background subtracted values, per pixel.
+        final int invalidPixels;        // Dropped for falling outside the mapped region.
         final int patch;
         final double[] peak;            // The spot peak behind each pooled sample.
         final double[] radius;
@@ -235,7 +236,8 @@ final class smFRETPSF {
 
         Samples(int patch, double[] radius, double[] value, double[] peak,
                 double[] imageValue, double[] imagePeak, int[] imageCount,
-                int spotsUsed, int spotsTotal) {
+                int spotsUsed, int spotsTotal, int invalidPixels) {
+            this.invalidPixels = invalidPixels;
             this.patch = patch;
             this.size = 2 * patch + 1;
             this.radius = radius;
@@ -336,6 +338,15 @@ final class smFRETPSF {
      * fitting those returns 1.53 sigma and 0.36 waves where the truth is 1.45 and 0.41. Masking
      * the pixels instead keeps 234 spots and returns 1.49 and 0.41.
      *
+     * **Pixels outside the mapped region are dropped along with the contaminated ones.** Warping
+     * the acceptor onto the donor's frame leaves a band around the edges where the inverse mapped
+     * coordinate falls outside the source, and transformImagePlus writes an exact zero there -
+     * the same sentinel createOverlapMask reads to find the region the two channels share. Those
+     * are not measurements of anything, and a patch reaching into that band would have them in
+     * its border median, in its peak and in the pool. On the example data the band is 1.5% of the
+     * acceptor half and three of its patches touch it; on a movie with a larger channel offset it
+     * would be far more. The donor is unwarped and has none, so this costs it nothing.
+     *
      * Patches are centred on the integer pixel the spot finder reported. MaximumFinder returns
      * the brightest pixel rather than a centroid, so a spot sits up to half a pixel off centre
      * and the pooled core comes out slightly broader than the truth - 1.49 against 1.45 on the
@@ -370,6 +381,7 @@ final class smFRETPSF {
         int[] imageCount = new int[size * size];
         boolean[] keep = new boolean[size * size];
         float[] border = new float[size * size];
+        int invalidPixels = 0;
         int used = 0;
 
         for (double[] spot : spots) {
@@ -383,7 +395,20 @@ final class smFRETPSF {
                 continue;
             }
 
-            java.util.Arrays.fill(keep, true);
+            // Out of range pixels start excluded rather than being cleared afterwards, so they
+            // are absent from the border median and the peak test as well as from the pool.
+            int dropped = 0;
+            for (int dy = 0; dy < size; dy++) {
+                for (int dx = 0; dx < size; dx++) {
+                    boolean mapped =
+                            pixels[(cy - patch + dy) * width + (cx - patch + dx)] != 0.0f;
+                    keep[dy * size + dx] = mapped;
+                    if (!mapped) {
+                        dropped++;
+                    }
+                }
+            }
+
             for (double[] other : spots) {
                 double gapX = other[0] - spot[0];
                 double gapY = other[1] - spot[1];
@@ -428,6 +453,7 @@ final class smFRETPSF {
                 continue;
             }
 
+            invalidPixels += dropped;
             for (int i = 0; i < keep.length; i++) {
                 if (!keep[i]) {
                     continue;
@@ -452,7 +478,7 @@ final class smFRETPSF {
             peak[i] = pooled.get(i)[2];
         }
         return new Samples(patch, radius, value, peak, imageValue, imagePeak, imageCount,
-                used, spots.length);
+                used, spots.length, invalidPixels);
     }
 
     /**

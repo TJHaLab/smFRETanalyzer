@@ -93,6 +93,7 @@ public class smFRETPSFVisualizer implements Command {
     private JSpinner patchSpinner;
     private JLabel adviceLabel;
     private JCheckBox pedestalBox;
+    private JComboBox<String> scaleCombo;
     private ProfilePanel[] profilePanel = new ProfilePanel[2];
     private PsfImagePanel[] imagePanel = new PsfImagePanel[2];
     private String root;
@@ -280,6 +281,13 @@ public class smFRETPSFVisualizer implements Command {
             text.append(String.format(", rms %.3f", fit.rms));
         }
 
+        int invalid = channel[DONOR].samples.invalidPixels
+                + channel[ACCEPTOR].samples.invalidPixels;
+        if (invalid > 0) {
+            text.append(String.format(" \u00b7 %,d px outside the mapped region excluded",
+                    invalid));
+        }
+
         if (!channel[DONOR].borderSettled) {
             text.append(" · border correction did not settle, treat the wings with care");
         }
@@ -414,6 +422,8 @@ public class smFRETPSFVisualizer implements Command {
                 }
             }
 
+            boolean logarithmic = (scaleCombo != null) && (scaleCombo.getSelectedIndex() == 1);
+
             double smallest = Double.MAX_VALUE;
             int unmeasured = 0;
             for (int i = 0; i < image.length; i++) {
@@ -454,8 +464,13 @@ public class smFRETPSFVisualizer implements Command {
                         // cannot be mistaken for a dark one.
                         rgb = UNMEASURED_COLOR.getRGB();
                     } else {
-                        double scaled = (Math.log10(Math.max(value, floor)) - logFloor)
-                                / (0.0 - logFloor);
+
+                        // The image is peak normalised, so linear runs 0 to 1 with nothing to
+                        // choose; the log floor is the decade below the smallest value drawn.
+                        double scaled = logarithmic
+                                ? ((Math.log10(Math.max(value, floor)) - logFloor)
+                                        / (0.0 - logFloor))
+                                : value;
                         int level = (int) Math.round(255.0 * Math.min(1.0, Math.max(0.0, scaled)));
                         rgb = new Color(level, level, level).getRGB();
                     }
@@ -489,7 +504,9 @@ public class smFRETPSFVisualizer implements Command {
             // The blue is only mentioned when there is some. On a field of a few hundred spots
             // every offset in the patch picks up a contribution from something and there are
             // none at all, so a permanent note about them would be a permanent puzzle.
-            String caption = String.format("r <= %d px, log scale %.0e to 1", patch, floor);
+            String caption = logarithmic
+                    ? String.format("r <= %d px, log scale %.0e to 1", patch, floor)
+                    : String.format("r <= %d px, linear 0 to 1", patch);
             if (unmeasured > 0) {
                 caption += String.format(" · %d px unmeasured (blue)", unmeasured);
             }
@@ -761,6 +778,23 @@ public class smFRETPSFVisualizer implements Command {
         binsSpinner = new JSpinner(new SpinnerNumberModel(smFRETPSF.DEFAULT_BINS, 6, 40, 1));
         pedestalBox = new JCheckBox("Fit a pedestal", true);
 
+        scaleCombo = new JComboBox<>(new String[] {"Linear", "Log"});
+        scaleCombo.setSelectedIndex(0);
+        scaleCombo.setToolTipText("<html>How the two images above map intensity to grey.<br>"
+                + "<b>Linear</b> shows how much light is where, and is the honest one for judging"
+                + " whether<br>something is large. Everything past the core is nearly black,"
+                + " because it genuinely is<br>a percent or two of the peak.<br>"
+                + "<b>Log</b> shows <i>where</i> the light is, spreading each decade over the same"
+                + " range of grey.<br>It is what makes the wings visible at all - the whole reason"
+                + " for an aberrated model -<br>but it magnifies small absolute differences down"
+                + " there, so structure can look far more<br>serious than it is. The profile plots"
+                + " below are always logarithmic.</html>");
+        scaleCombo.addActionListener(e -> {
+            for (int c = 0; c < 2; c++) {
+                imagePanel[c].repaint();
+            }
+        });
+
         // None of these is guessable from its label, and two of them interact in a way that is
         // invisible from either one alone, so the tooltips say so.
         String patchTip = "<html>Half width of the square cut around each spot, in pixels.<br>"
@@ -829,6 +863,13 @@ public class smFRETPSFVisualizer implements Command {
         controls.add(binsSpinner, at);
 
         at.gridx = 6;
+        JLabel scaleLabel = new JLabel("Image scale");
+        scaleLabel.setToolTipText(scaleCombo.getToolTipText());
+        controls.add(scaleLabel, at);
+        at.gridx = 7;
+        controls.add(scaleCombo, at);
+
+        at.gridx = 8;
         controls.add(pedestalBox, at);
 
         JLabel modelLabel = new JLabel(MODEL_DESCRIPTION);
