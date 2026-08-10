@@ -293,6 +293,25 @@ final class smFRETPSF {
             this.withPedestal = withPedestal;
         }
 
+        /**
+         * The measured PSF as an image, on the same footing as the radial profile.
+         *
+         * Samples.image() is the raw pooled ratio, with the border median still subtracted out of
+         * it - so its outer pixels read near zero by construction and some go slightly negative.
+         * The profile has the border put back before it is fitted or drawn, and the image has to
+         * have it too, or the two halves of the display are showing the same measurement on
+         * different footings and the image looks black where the profile says there is light.
+         */
+        double[] correctedImage() {
+            double[] image = samples.image();
+            for (int i = 0; i < image.length; i++) {
+                if (!Double.isNaN(image[i])) {
+                    image[i] = (image[i] * (1.0 - borderLevel)) + borderLevel;
+                }
+            }
+            return image;
+        }
+
         /** Bins holding enough pixels to mean anything, which is what the fit ran over. */
         boolean[] usable() {
             boolean[] good = new boolean[binCount.length];

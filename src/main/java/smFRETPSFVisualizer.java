@@ -54,17 +54,24 @@ public class smFRETPSFVisualizer implements Command {
     private static final Color FIT_COLOR = new Color(70, 115, 175);
     private static final Color RAW_COLOR = new Color(170, 170, 170);
 
-    // The profile is drawn on a log axis, because on a linear one everything past the core is a
-    // flat line along zero and the entire question - how much light is out in the wings - becomes
-    // invisible. This is the floor of that axis.
-    private static final double PROFILE_FLOOR = 1.0e-4;
+    // Both plots are logarithmic, because on a linear axis everything past the core is a flat
+    // line along zero and the entire question - how much light is out in the wings - becomes
+    // invisible. The floor is chosen from the data rather than fixed: on the example data the
+    // profile bottoms out around 0.024, so a fixed 1e-4 floor left half the axis empty.
+    private static final double FLOOR_LOWEST = 1.0e-6;
+    private static final double FLOOR_HIGHEST = 1.0e-1;
+
+    // What the fit is, said once where it is being looked at.
+    private static final String MODEL_DESCRIPTION =
+            "Data fit with an Airy disk model with primary spherical aberration";
 
     // Member variables.
     private JSpinner binsSpinner;
     private smFRETPSF.Measurement[] channel = new smFRETPSF.Measurement[2];
     private final boolean isHeadless = GraphicsEnvironment.isHeadless();
+    private int firstFrame = 1;
     private JFrame frame;
-    private smFRETTraceHistogram.RangeSlider frameRange;
+    private int lastFrame = 1;
     private ImagePlus movie;
     private JSpinner maskSpinner;
     private JSpinner patchSpinner;
@@ -79,10 +86,9 @@ public class smFRETPSFVisualizer implements Command {
     private JLabel statusLabel;
     private boolean suspendUpdates = false;
 
-    // The averaged and split halves, kept so that changing the patch or the mask does not redo
-    // the averaging and the warp. Keyed on the frame range, which is the only thing that changes
-    // them - the same argument as smFRETSpotFinder's cache, for the same reason.
-    private String cachedRange;
+    // The averaged and split halves. Built once: the frame range is fixed at whatever spot
+    // finding used, so nothing the user can change from here affects them, and re-measuring after
+    // a patch or mask change costs only the extraction.
     private float[][] cachedHalf = new float[2][];
     private int cachedWidth;
     private int cachedHeight;
@@ -109,6 +115,13 @@ public class smFRETPSFVisualizer implements Command {
 
         spotSigma = ((Number) mapping.get("spot sigma")).doubleValue();
 
+        // The same frames spot finding averaged. Not offered as a control: a PSF is a property of
+        // the optics rather than of the movie, so averaging a different stretch of the same field
+        // is a way to get a noisier version of the same answer. Taking the recorded range also
+        // means the PSF is measured from the very image the spots were found in.
+        firstFrame = intOr(mapping.get("start slice"), 1);
+        lastFrame = intOr(mapping.get("end slice"), Integer.MAX_VALUE);
+
         File spotsFile = locate((String) mapping.get("spots file"), jsonDir, root + "_spotf_spots.csv");
         File imageFile = locate((String) mapping.get("image name"), jsonDir, null);
         File mappingFile = locate((String) mapping.get("mapping file"), jsonDir, null);
@@ -130,6 +143,11 @@ public class smFRETPSFVisualizer implements Command {
         movie = smFRETChannelMapper.toFloat(movie);
 
         log.info("loaded " + spots.length + " spots from " + root);
+    }
+
+    /** A recorded integer, or a default when an older spot finder did not write it. */
+    private static int intOr(Object value, int fallback) {
+        return (value instanceof Number) ? ((Number) value).intValue() : fallback;
     }
 
     /**
@@ -160,14 +178,14 @@ public class smFRETPSFVisualizer implements Command {
      * in the pipeline uses. Consistency with how the acceptor is actually measured is worth more
      * here than the last few percent of core width.
      */
-    private void buildHalves(int first, int last) {
-        String key = first + "-" + last;
-        if (key.equals(cachedRange) && (cachedHalf[DONOR] != null)) {
+    private void buildHalves() {
+        if (cachedHalf[DONOR] != null) {
             return;
         }
-        cachedRange = null;
 
-        ImagePlus averaged = smfcm.averageImagePlus(movie, first, last);
+        // averageImagePlus clamps the range to the movie, so an end slice past the last frame -
+        // which is what the Integer.MAX_VALUE fallback is - simply means "to the end".
+        ImagePlus averaged = smfcm.averageImagePlus(movie, firstFrame, lastFrame);
         java.util.List<ImagePlus> halves = smfcm.splitImagePlus(averaged, true);
 
         for (int c = 0; c < 2; c++) {
@@ -181,7 +199,6 @@ public class smFRETPSFVisualizer implements Command {
                 }
             }
         }
-        cachedRange = key;
     }
 
     /**
@@ -194,13 +211,11 @@ public class smFRETPSFVisualizer implements Command {
         try {
             frame.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
 
-            int first = frameRange.getLow();
-            int last = frameRange.getHigh();
             int patch = ((Number) patchSpinner.getValue()).intValue();
             double mask = ((Number) maskSpinner.getValue()).doubleValue();
             int bins = ((Number) binsSpinner.getValue()).intValue();
 
-            buildHalves(first, last);
+            buildHalves();
             for (int c = 0; c < 2; c++) {
                 channel[c] = smFRETPSF.analyse(
                         smFRETPSF.extract(cachedHalf[c], cachedWidth, cachedHeight, spots,
@@ -224,8 +239,9 @@ public class smFRETPSFVisualizer implements Command {
     private String describe() {
         smFRETPSF.Measurement donor = channel[DONOR];
         StringBuilder text = new StringBuilder();
-        text.append(String.format("%,d of %,d spots used", donor.samples.spotsUsed,
-                donor.samples.spotsTotal));
+        text.append(String.format("%,d of %,d spots used · frames %d-%d",
+                donor.samples.spotsUsed, donor.samples.spotsTotal,
+                firstFrame, Math.min(lastFrame, smFRETChannelMapper.frameCount(movie))));
 
         for (int c = 0; c < 2; c++) {
             smFRETPSF.Fit fit = fitOf(c);
@@ -245,6 +261,22 @@ public class smFRETPSFVisualizer implements Command {
             text.append(" · border correction did not settle, treat the wings with care");
         }
         return text.toString();
+    }
+
+    /**
+     * The bottom of a log axis, chosen so the data fills it.
+     *
+     * The decade at or below the smallest value being drawn, clamped so a single stray point near
+     * zero cannot stretch the axis to nothing. A fixed floor is what left the plots using half
+     * their height: the profile on the example data bottoms out around 0.024, two decades above
+     * the 1e-4 the axis used to start at.
+     */
+    private static double floorFor(double smallest) {
+        if (!(smallest > 0.0) || Double.isNaN(smallest)) {
+            return FLOOR_HIGHEST;
+        }
+        double decade = Math.pow(10.0, Math.floor(Math.log10(smallest)));
+        return Math.min(FLOOR_HIGHEST, Math.max(FLOOR_LOWEST, decade));
     }
 
     /** Whichever of the two fits the pedestal checkbox is asking for. */
@@ -290,7 +322,19 @@ public class smFRETPSFVisualizer implements Command {
                     RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 
             int size = measurement.samples.size;
-            double[] image = measurement.samples.image();
+
+            // Border corrected, so this and the profile below it are the same measurement on the
+            // same footing. Without it the outer pixels read near zero by construction - the
+            // border median having been subtracted out of every patch - and a few go negative.
+            double[] image = measurement.correctedImage();
+
+            double smallest = Double.MAX_VALUE;
+            for (double value : image) {
+                if (!Double.isNaN(value) && (value > 0.0)) {
+                    smallest = Math.min(smallest, value);
+                }
+            }
+            double floor = floorFor(smallest);
 
             int titleHeight = 20;
             int side = Math.min(getWidth() - 12, getHeight() - 12 - titleHeight);
@@ -302,7 +346,7 @@ public class smFRETPSFVisualizer implements Command {
             int top = titleHeight + ((getHeight() - titleHeight - side) / 2);
 
             BufferedImage rendered = new BufferedImage(size, size, BufferedImage.TYPE_INT_RGB);
-            double logFloor = Math.log10(PROFILE_FLOOR);
+            double logFloor = Math.log10(floor);
             for (int y = 0; y < size; y++) {
                 for (int x = 0; x < size; x++) {
                     double value = image[y * size + x];
@@ -313,7 +357,7 @@ public class smFRETPSFVisualizer implements Command {
                         // cannot be mistaken for a dark one.
                         rgb = new Color(60, 70, 110).getRGB();
                     } else {
-                        double scaled = (Math.log10(Math.max(value, PROFILE_FLOOR)) - logFloor)
+                        double scaled = (Math.log10(Math.max(value, floor)) - logFloor)
                                 / (0.0 - logFloor);
                         int level = (int) Math.round(255.0 * Math.min(1.0, Math.max(0.0, scaled)));
                         rgb = new Color(level, level, level).getRGB();
@@ -332,8 +376,8 @@ public class smFRETPSFVisualizer implements Command {
 
             g2.setFont(g2.getFont().deriveFont(Font.PLAIN, 10.0f));
             g2.setColor(Color.GRAY);
-            g2.drawString(String.format("%d px across, log scale to %.0e",
-                    size, PROFILE_FLOOR), left, top + side + 12);
+            g2.drawString(String.format("%d px across, log scale %.0e to 1", size, floor),
+                    left, top + side + 12);
 
             g2.dispose();
         }
@@ -349,6 +393,7 @@ public class smFRETPSFVisualizer implements Command {
         private static final int MARGIN_RIGHT = 12;
         private static final int MARGIN_TOP = 24;
 
+        private double floor = FLOOR_HIGHEST;
         private final int index;
 
         ProfilePanel(int index) {
@@ -362,9 +407,8 @@ public class smFRETPSFVisualizer implements Command {
         }
 
         private int yFor(double value, int height) {
-            double logFloor = Math.log10(PROFILE_FLOOR);
-            double scaled = (Math.log10(Math.max(value, PROFILE_FLOOR)) - logFloor)
-                    / (0.0 - logFloor);
+            double logFloor = Math.log10(floor);
+            double scaled = (Math.log10(Math.max(value, floor)) - logFloor) / (0.0 - logFloor);
             return MARGIN_TOP + height - (int) Math.round(scaled * height);
         }
 
@@ -391,10 +435,30 @@ public class smFRETPSFVisualizer implements Command {
             double maxRadius = measurement.samples.patch;
             boolean[] usable = measurement.usable();
 
+            // The axis is scaled to what is actually drawn - both the measured points and the
+            // fitted curve, since a pedestal below the last point would otherwise fall off the
+            // bottom of a plot that claims to show it.
+            smFRETPSF.Fit fit = fitOf(index);
+            double smallest = Double.MAX_VALUE;
+            for (int i = 0; i < usable.length; i++) {
+                if (usable[i]) {
+                    smallest = Math.min(smallest, Math.min(measurement.binProfile[i],
+                            measurement.binRaw[i]));
+                }
+            }
+            if (fit != null) {
+                double[] ends = fit.at(new double[] {maxRadius});
+                smallest = Math.min(smallest, ends[0]);
+                if (pedestalBox.isSelected() && (fit.pedestal > 0.0)) {
+                    smallest = Math.min(smallest, fit.pedestal);
+                }
+            }
+            floor = floorFor(smallest);
+
             // Decade gridlines, which on a log axis are the only tick positions that mean
             // anything.
             g2.setFont(g2.getFont().deriveFont(Font.PLAIN, 10.0f));
-            for (double decade = 1.0; decade >= PROFILE_FLOOR; decade /= 10.0) {
+            for (double decade = 1.0; decade >= floor; decade /= 10.0) {
                 int y = yFor(decade, height);
                 g2.setColor(new Color(232, 232, 232));
                 g2.drawLine(MARGIN_LEFT, y, MARGIN_LEFT + width, y);
@@ -426,7 +490,6 @@ public class smFRETPSFVisualizer implements Command {
                 g2.drawOval(x - 3, yFor(measurement.binRaw[i], height) - 3, 6, 6);
             }
 
-            smFRETPSF.Fit fit = fitOf(index);
             if (fit != null) {
                 double[] fine = new double[120];
                 for (int i = 0; i < fine.length; i++) {
@@ -442,7 +505,7 @@ public class smFRETPSFVisualizer implements Command {
                 }
                 g2.setStroke(new BasicStroke(1.0f));
 
-                if (pedestalBox.isSelected() && (fit.pedestal > PROFILE_FLOOR)) {
+                if (pedestalBox.isSelected() && (fit.pedestal > floor)) {
                     int y = yFor(fit.pedestal, height);
                     g2.setColor(new Color(FIT_COLOR.getRed(), FIT_COLOR.getGreen(),
                             FIT_COLOR.getBlue(), 120));
@@ -493,16 +556,37 @@ public class smFRETPSFVisualizer implements Command {
             panels.add(profilePanel[c]);
         }
 
-        int frames = smFRETChannelMapper.frameCount(movie);
-        frameRange = new smFRETTraceHistogram.RangeSlider(1, Math.max(1, frames));
-        frameRange.setValues(1, Math.max(1, frames));
-        frameRange.addChangeListener(e -> update());
-
         patchSpinner = new JSpinner(new SpinnerNumberModel(smFRETPSF.DEFAULT_PATCH, 5, 20, 1));
         maskSpinner = new JSpinner(new SpinnerNumberModel(
                 smFRETPSF.DEFAULT_NEIGHBOUR_MASK, 0.0, 15.0, 0.5));
         binsSpinner = new JSpinner(new SpinnerNumberModel(smFRETPSF.DEFAULT_BINS, 6, 40, 1));
         pedestalBox = new JCheckBox("Fit a pedestal", true);
+
+        // None of these is guessable from its label, and two of them interact in a way that is
+        // invisible from either one alone, so the tooltips say so.
+        String patchTip = "<html>Half width of the square cut around each spot, in pixels.<br>"
+                + "Wide enough to hold the wings the model is fitting, narrow enough that a"
+                + " crowded<br>field still leaves border pixels around each spot - the border is"
+                + " what the local<br>background is taken from.</html>";
+        String maskTip = "<html>Pixels this close to <i>another</i> spot are discarded, in"
+                + " pixels.<br>"
+                + "Contaminated pixels are dropped rather than contaminated spots, which is what"
+                + " keeps<br>a crowded field usable. <b>A neighbour further away than Patch +"
+                + " Neighbour mask cannot<br>reach a patch pixel at all</b>, so raising this past"
+                + " that does nothing until Patch goes up<br>too. Set it to 0 to switch the"
+                + " masking off.</html>";
+        String binsTip = "<html>How many radial bins the pooled pixels are averaged into.<br>"
+                + "More bins resolve the profile more finely and put fewer pixels in each; bins"
+                + " holding<br>too few pixels are dropped from the plot and from the fit.</html>";
+
+        patchSpinner.setToolTipText(patchTip);
+        maskSpinner.setToolTipText(maskTip);
+        binsSpinner.setToolTipText(binsTip);
+        pedestalBox.setToolTipText("<html>Fit a flat term under the PSF.<br>"
+                + "On the example data this cuts the residual more than fourfold and leaves about"
+                + " 3% of<br>peak, flat out where any real wing would still be decaying - which"
+                + " looks like a scattered<br>light halo rather than aberration. Simulated data,"
+                + " which has no halo, fits a pedestal<br>of almost zero.</html>");
 
         patchSpinner.addChangeListener(e -> update());
         maskSpinner.addChangeListener(e -> update());
@@ -522,33 +606,34 @@ public class smFRETPSFVisualizer implements Command {
         at.insets = new Insets(2, 4, 2, 4);
         at.anchor = GridBagConstraints.WEST;
 
-        at.gridx = 0;
         at.gridy = 0;
-        controls.add(new JLabel("Frames"), at);
-        at.gridx = 1;
-        at.fill = GridBagConstraints.HORIZONTAL;
-        at.weightx = 1.0;
-        at.gridwidth = 5;
-        controls.add(frameRange, at);
-
-        at.gridwidth = 1;
-        at.weightx = 0.0;
-        at.fill = GridBagConstraints.NONE;
-        at.gridy = 1;
         at.gridx = 0;
-        controls.add(new JLabel("Patch"), at);
+        JLabel patchLabel = new JLabel("Patch");
+        patchLabel.setToolTipText(patchTip);
+        controls.add(patchLabel, at);
         at.gridx = 1;
         controls.add(patchSpinner, at);
+
         at.gridx = 2;
-        controls.add(new JLabel("Neighbour mask"), at);
+        JLabel maskLabel = new JLabel("Neighbour mask");
+        maskLabel.setToolTipText(maskTip);
+        controls.add(maskLabel, at);
         at.gridx = 3;
         controls.add(maskSpinner, at);
+
         at.gridx = 4;
-        controls.add(new JLabel("Bins"), at);
+        JLabel binsLabel = new JLabel("Bins");
+        binsLabel.setToolTipText(binsTip);
+        controls.add(binsLabel, at);
         at.gridx = 5;
         controls.add(binsSpinner, at);
+
         at.gridx = 6;
         controls.add(pedestalBox, at);
+
+        JLabel modelLabel = new JLabel(MODEL_DESCRIPTION);
+        modelLabel.setBorder(new EmptyBorder(2, 8, 0, 8));
+        modelLabel.setForeground(FIT_COLOR);
 
         statusLabel = new JLabel(" ");
         statusLabel.setBorder(new EmptyBorder(2, 8, 4, 8));
@@ -562,9 +647,13 @@ public class smFRETPSFVisualizer implements Command {
         buttons.add(saveCsv);
         buttons.add(savePng);
 
+        JPanel captions = new JPanel(new GridLayout(2, 1));
+        captions.add(modelLabel);
+        captions.add(statusLabel);
+
         JPanel bottom = new JPanel(new BorderLayout());
         bottom.add(controls, BorderLayout.NORTH);
-        bottom.add(statusLabel, BorderLayout.CENTER);
+        bottom.add(captions, BorderLayout.CENTER);
         bottom.add(buttons, BorderLayout.SOUTH);
 
         frame.getContentPane().add(panels, BorderLayout.CENTER);
@@ -588,8 +677,10 @@ public class smFRETPSFVisualizer implements Command {
 
         try (PrintWriter writer = new PrintWriter(chooser.getSelectedFile())) {
             writer.println("# PSF measured from " + spotJSONFile);
-            writer.println("# frames " + frameRange.getLow() + "-" + frameRange.getHigh()
-                    + ", patch " + patchSpinner.getValue()
+            writer.println("# " + MODEL_DESCRIPTION);
+            writer.println("# frames " + firstFrame + "-"
+                    + Math.min(lastFrame, smFRETChannelMapper.frameCount(movie))
+                    + " (as used for spot finding), patch " + patchSpinner.getValue()
                     + ", neighbour mask " + maskSpinner.getValue()
                     + ", bins " + binsSpinner.getValue());
             writer.println("# spot sigma used for finding: " + spotSigma);
@@ -647,7 +738,7 @@ public class smFRETPSFVisualizer implements Command {
             Container panels = (Container) frame.getContentPane().getComponent(0);
             int titleHeight = 28;
             BufferedImage image = new BufferedImage(panels.getWidth(),
-                    panels.getHeight() + titleHeight + 22, BufferedImage.TYPE_INT_RGB);
+                    panels.getHeight() + titleHeight + 36, BufferedImage.TYPE_INT_RGB);
 
             Graphics2D g2 = image.createGraphics();
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
@@ -666,8 +757,10 @@ public class smFRETPSFVisualizer implements Command {
 
             g2.translate(0, panels.getHeight());
             g2.setFont(g2.getFont().deriveFont(Font.PLAIN, 11.0f));
+            g2.setColor(FIT_COLOR);
+            g2.drawString(MODEL_DESCRIPTION, 8, 13);
             g2.setColor(Color.DARK_GRAY);
-            g2.drawString(describe(), 8, 14);
+            g2.drawString(describe(), 8, 27);
             g2.dispose();
 
             ImageIO.write(image, "png", chooser.getSelectedFile());
@@ -697,7 +790,7 @@ public class smFRETPSFVisualizer implements Command {
                 // Nothing to show, and nothing this plugin does is worth doing without somewhere
                 // to show it - it writes only on request. Measure once so a headless run still
                 // reports the fit to the log, which is what a macro would be after.
-                buildHalves(1, smFRETChannelMapper.frameCount(movie));
+                buildHalves();
                 for (int c = 0; c < 2; c++) {
                     smFRETPSF.Measurement m = smFRETPSF.analyse(
                             smFRETPSF.extract(cachedHalf[c], cachedWidth, cachedHeight, spots,

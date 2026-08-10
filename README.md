@@ -153,9 +153,10 @@ The model is an **Airy pattern with primary spherical aberration**, not a Gaussi
 
 * Spot Finder JSON file - The JSON file written by smFRETSpotFinder.
 
+The frames it measures are **the ones spot finding used**, read from the JSON, and are not offered as a control. A PSF is a property of the optics rather than of the movie, so averaging a different stretch of the same field only gives a noisier version of the same answer - and taking the recorded range means the PSF is measured from the very image the spots were found in. The range in use is shown in the status line.
+
 #### Controls:
 
-* Frames - Which frames to average before measuring. The same keys as the other range sliders: arrows move by one, Page Up and Page Down by a whole interval, Home and End to the ends.
 * Patch - Half width of the square cut around each spot, in pixels. It has to be wide enough to hold the wings the model exists to measure and narrow enough that a crowded field still leaves border pixels around each spot.
 * Neighbour mask - How close to another spot a pixel may be before it is discarded. **Note that a neighbour further away than Patch + Neighbour mask cannot reach a patch pixel at all**, so at the defaults of 10 and 6 nothing beyond 16 pixels is masked, and setting the mask to 0 turns the masking off entirely.
 * Bins - How many radial bins the profile is pooled into.
@@ -163,8 +164,10 @@ The model is an **Airy pattern with primary spherical aberration**, not a Gaussi
 
 #### Panels:
 
-* *Upper two* - The measured PSF in each channel, pooled over every usable spot, on a **logarithmic** grey scale. Log because on a linear stretch a pattern holding a percent of its peak at eight pixels looks identical to one holding nothing there, which is the distinction the whole plugin is about. Pixels that were masked out in every patch covering them are drawn in blue rather than black, so "nothing measured here" cannot be mistaken for "no light here".
-* *Lower two* - The radial profile of each channel against the fit, also logarithmic. Filled points are the measured profile, hollow grey points behind them are the same profile before the border correction, and the line is the fit. The fitted core width and aberration are printed on each panel and in the status line.
+* *Upper two* - The measured PSF in each channel, pooled over every usable spot, on a **logarithmic** grey scale. Log because on a linear stretch a pattern holding a percent of its peak at eight pixels looks identical to one holding nothing there, which is the distinction the whole plugin is about. Pixels that were masked out in every patch covering them are drawn in blue rather than black, so "nothing measured here" cannot be mistaken for "no light here". On a field with a few hundred spots there are usually none of these - every offset within the patch picks up a contribution from some spot - so seeing no blue at all is the normal case rather than a sign of trouble.
+* *Lower two* - The radial profile of each channel against the fit, also logarithmic. Filled points are the measured profile, hollow grey points behind them are the same profile before the border correction, and the line is the fit. The fitted core width and aberration are printed on each panel and in the status line, and the model being fitted is named under the plots.
+
+Both panels scale their logarithmic range to the data rather than starting from a fixed floor, so a plot fills its height whatever the wings turn out to hold. The images and the profiles are on the same footing - both border corrected - so a pixel that looks dark in the image agrees with the value the profile reports at that radius.
 
 Two things about the measurement are worth knowing before reading too much into a number:
 

@@ -375,6 +375,49 @@ class PSFMeasurementTest {
     }
 
     /**
+     * The image the panel draws is border corrected, the same as the profile beside it.
+     *
+     * Samples.image() is the raw pooled ratio with the border median still out of it, so its
+     * outer pixels sit near zero by construction and some go negative - on the example data the
+     * donor bottoms out at -0.0024, which clamps to black and reads as "no light here" when the
+     * profile below it is saying 0.024.
+     */
+    @Test
+    @DisplayName("the drawn image has the border put back, like the profile")
+    void correctedImageMatchesTheProfileFooting() {
+        List<double[]> spots = grid(50, 40);
+        smFRETPSF.Measurement measurement = measure(spots, NEIGHBOUR_MASK);
+
+        double[] raw = measurement.samples.image();
+        double[] corrected = measurement.correctedImage();
+        assertTrue(measurement.borderLevel > 0.0, "nothing to correct on this fixture");
+
+        for (int i = 0; i < raw.length; i++) {
+            if (Double.isNaN(raw[i])) {
+                assertTrue(Double.isNaN(corrected[i]), "an unmeasured pixel should stay unmeasured");
+                continue;
+            }
+            assertEquals((raw[i] * (1.0 - measurement.borderLevel)) + measurement.borderLevel,
+                    corrected[i], 1.0e-12, "at index " + i);
+
+            // Never downward. Not strictly upward either: the peak is 1 by construction and
+            // v(1-L)+L has a fixed point there, which is the property that keeps the corrected
+            // image still normalised to its own peak.
+            assertTrue(corrected[i] >= (raw[i] - 1.0e-12),
+                    "the correction should not lower anything, at index " + i);
+        }
+
+        int size = measurement.samples.size;
+        assertTrue(corrected[0] > raw[0], "the corner should have been lifted");
+        assertEquals(1.0, corrected[(size / 2) * size + (size / 2)], 1.0e-12,
+                "the peak is a fixed point of the correction");
+
+        // And it is the same lift the profile got, so the two agree at the centre.
+        assertEquals(measurement.binProfile[0], corrected[PATCH * size + PATCH], 1.0e-9,
+                "the centre pixel and the first bin are both the peak");
+    }
+
+    /**
      * Pixels no spot could contribute to are NaN rather than zero, so a display can tell "nothing
      * measured here" from "no light here" - on a crowded field at a large mask those are very
      * different statements.
