@@ -76,6 +76,8 @@ JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64 mvn clean package
 
 The build resolves ImageJ/SciJava core artifacts from Maven Central plus the `scijava.public` repository declared in `pom.xml`. `mvn test` runs the suite in `src/test/java` — 144 tests, about 10 s, no data or Fiji install needed. See **Tests** below.
 
+`.github/workflows/tests.yml` runs `mvn -B verify` on every pull request and on pushes to `main`. **It pins the JDK to 11 for the reason above** — a runner's default is well past 21, where `--release 8` fails outright, so an unpinned or modernized Java version breaks CI for a reason unrelated to whatever is being tested. Note that for this to fire on pull requests against `TJHaLab/smFRETanalyzer`, the workflow has to be on **that** repository's default branch; a copy on a fork does nothing for upstream pull requests, except on the pull request that introduces it, since GitHub takes workflow definitions from the merge ref.
+
 **Runtime dependency not in `pom.xml`:** the channel mapper requires the [TurboReg](https://imagej.net/plugins/turboreg) plugin (v2.0.1) to be present in the target Fiji/ImageJ installation's plugin path — it's invoked via reflection at runtime, not linked at compile time.
 
 To use the plugin, install the built jar into a Fiji/ImageJ `plugins/` directory alongside TurboReg; the four commands then appear under `Plugins > smFRET`.
