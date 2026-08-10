@@ -54,6 +54,13 @@ public class smFRETPSFVisualizer implements Command {
     private static final Color FIT_COLOR = new Color(70, 115, 175);
     private static final Color RAW_COLOR = new Color(170, 170, 170);
 
+    // Two ways a pixel can carry no measurement, kept apart on purpose. UNMEASURED_COLOR is a
+    // pixel every patch covering it had masked out - there is no data there at all. OUTSIDE_COLOR
+    // is a pixel past the analysis radius: it was measured, but the radial profile does not bin
+    // it and the fit never saw it. Collapsing the two into one colour would lose that.
+    private static final Color OUTSIDE_COLOR = new Color(238, 236, 230);
+    private static final Color UNMEASURED_COLOR = new Color(60, 70, 110);
+
     // Both plots are logarithmic, because on a linear axis everything past the core is a flat
     // line along zero and the entire question - how much light is out in the wings - becomes
     // invisible. The floor is chosen from the data rather than fixed: on the example data the
@@ -385,13 +392,30 @@ public class smFRETPSFVisualizer implements Command {
             // border median having been subtracted out of every patch - and a few go negative.
             double[] image = measurement.correctedImage();
 
+            // Past the analysis radius the patch is the annulus the border median was taken
+            // from, so subtracting that scalar drives it to zero on average - and unevenly, since
+            // the corners at r = 14 hold far less PSF than the edge midpoints at r = 10 and end
+            // up negative. That blotching is an artifact of the method in a region the radial
+            // profile already ignores, so it is not drawn, and it is kept out of the scaling as
+            // well or it would drag the log floor down to fit values that are not shown.
+            int patch = measurement.samples.patch;
+            boolean[] outside = new boolean[image.length];
+            for (int y = 0; y < size; y++) {
+                for (int x = 0; x < size; x++) {
+                    outside[y * size + x] = Math.hypot(x - patch, y - patch) > patch;
+                }
+            }
+
             double smallest = Double.MAX_VALUE;
             int unmeasured = 0;
-            for (double value : image) {
-                if (Double.isNaN(value)) {
+            for (int i = 0; i < image.length; i++) {
+                if (outside[i]) {
+                    continue;
+                }
+                if (Double.isNaN(image[i])) {
                     unmeasured++;
-                } else if (value > 0.0) {
-                    smallest = Math.min(smallest, value);
+                } else if (image[i] > 0.0) {
+                    smallest = Math.min(smallest, image[i]);
                 }
             }
             double floor = floorFor(smallest);
@@ -414,11 +438,13 @@ public class smFRETPSFVisualizer implements Command {
                 for (int x = 0; x < size; x++) {
                     double value = image[y * size + x];
                     int rgb;
-                    if (Double.isNaN(value)) {
+                    if (outside[y * size + x]) {
+                        rgb = OUTSIDE_COLOR.getRGB();
+                    } else if (Double.isNaN(value)) {
 
                         // A colour no part of the greyscale ramp reaches, so an unmeasured pixel
                         // cannot be mistaken for a dark one.
-                        rgb = new Color(60, 70, 110).getRGB();
+                        rgb = UNMEASURED_COLOR.getRGB();
                     } else {
                         double scaled = (Math.log10(Math.max(value, floor)) - logFloor)
                                 / (0.0 - logFloor);
@@ -437,12 +463,21 @@ public class smFRETPSFVisualizer implements Command {
             g2.setColor(new Color(120, 120, 120));
             g2.drawRect(left, top, side, side);
 
+            // The analysis radius itself. The mask edge is a staircase of whole pixels, so
+            // without this it is not obvious that the boundary is a circle of a stated radius
+            // rather than wherever the data happened to stop.
+            g2.setColor(new Color(150, 150, 150));
+            double scale = (double) side / size;
+            int diameter = (int) Math.round(2.0 * patch * scale);
+            g2.drawOval(left + (int) Math.round(0.5 * scale), top + (int) Math.round(0.5 * scale),
+                    diameter, diameter);
+
             g2.setFont(g2.getFont().deriveFont(Font.PLAIN, 10.0f));
             g2.setColor(Color.GRAY);
             // The blue is only mentioned when there is some. On a field of a few hundred spots
             // every offset in the patch picks up a contribution from something and there are
             // none at all, so a permanent note about them would be a permanent puzzle.
-            String caption = String.format("%d px across, log scale %.0e to 1", size, floor);
+            String caption = String.format("r <= %d px, log scale %.0e to 1", patch, floor);
             if (unmeasured > 0) {
                 caption += String.format(" · %d px unmeasured (blue)", unmeasured);
             }
