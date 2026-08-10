@@ -58,6 +58,10 @@ public class smFRETPSFVisualizer implements Command {
     // pixel every patch covering it had masked out - there is no data there at all. OUTSIDE_COLOR
     // is a pixel past the analysis radius: it was measured, but the radial profile does not bin
     // it and the fit never saw it. Collapsing the two into one colour would lose that.
+    // Magenta rather than red: red is the acceptor's colour in the plots below, and the ring
+    // has nothing to do with a channel. Nothing on a greyscale image can be mistaken for it.
+    private static final Color RADIUS_COLOR = new Color(210, 30, 160);
+
     private static final Color OUTSIDE_COLOR = new Color(238, 236, 230);
     private static final Color UNMEASURED_COLOR = new Color(60, 70, 110);
 
@@ -368,7 +372,11 @@ public class smFRETPSFVisualizer implements Command {
 
         PsfImagePanel(int index) {
             this.index = index;
-            setPreferredSize(new Dimension(300, 300));
+            // Wider than the image needs, so the window as a whole opens at about 3:2. The
+            // image is centred and scaled to whichever of the two fits, so the extra width is
+            // margin rather than distortion, and the profile panels below get the room that
+            // actually benefits them.
+            setPreferredSize(new Dimension(525, 280));
             setBackground(Color.WHITE);
             setBorder(new EmptyBorder(6, 6, 6, 6));
         }
@@ -465,12 +473,16 @@ public class smFRETPSFVisualizer implements Command {
 
             // The analysis radius itself. The mask edge is a staircase of whole pixels, so
             // without this it is not obvious that the boundary is a circle of a stated radius
-            // rather than wherever the data happened to stop.
-            g2.setColor(new Color(150, 150, 150));
+            // rather than wherever the data happened to stop. The circle passes through the
+            // centres of the pixels at exactly that radius, which is where the mask test sits,
+            // so the staircase straddles it rather than sitting inside it.
+            g2.setColor(RADIUS_COLOR);
+            g2.setStroke(new BasicStroke(2.0f));
             double scale = (double) side / size;
             int diameter = (int) Math.round(2.0 * patch * scale);
             g2.drawOval(left + (int) Math.round(0.5 * scale), top + (int) Math.round(0.5 * scale),
                     diameter, diameter);
+            g2.setStroke(new BasicStroke(1.0f));
 
             g2.setFont(g2.getFont().deriveFont(Font.PLAIN, 10.0f));
             g2.setColor(Color.GRAY);
@@ -502,7 +514,7 @@ public class smFRETPSFVisualizer implements Command {
 
         ProfilePanel(int index) {
             this.index = index;
-            setPreferredSize(new Dimension(300, 260));
+            setPreferredSize(new Dimension(525, 270));
             setBackground(Color.WHITE);
         }
 
