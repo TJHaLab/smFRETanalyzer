@@ -328,7 +328,7 @@ public class smFRETChannelMapper implements Command {
      * sharing a matrix, by Cramer's rule. mpicbg's AffineModel2D.fit was doing the same thing for
      * the same three points; the results agreed to 2e-13 pixels, and this drops the dependency.
      */
-    private static double[] solveAffine(double[][] source, double[][] target) {
+    static double[] solveAffine(double[][] source, double[][] target) {
         double[][] m = {
             {source[0][0], source[0][1], 1.0},
             {source[1][0], source[1][1], 1.0},
@@ -456,7 +456,7 @@ public class smFRETChannelMapper implements Command {
      * with zero and letting the interpolator blend across the boundary would be defensible on its
      * own terms, but it is a change of behaviour and not of implementation.
      */
-    private ImagePlus transformImagePlus(RandomAccessibleInterval<FloatType> image, int width, int height){
+    ImagePlus transformImagePlus(RandomAccessibleInterval<FloatType> image, int width, int height){
         if (transformModel == null) {
             throw new smFRETAnalysisException("Error: Cannot transform image, transform model not set");
         }

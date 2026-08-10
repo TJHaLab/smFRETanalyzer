@@ -45,23 +45,23 @@ public class smFRETTraceHistogram implements Command {
     File h5File;
 
     // Histogram types, indices match the order of the type radio buttons.
-    private static final int TYPE_FRET = 0;
-    private static final int TYPE_DONOR = 1;
-    private static final int TYPE_ACCEPTOR = 2;
-    private static final int TYPE_TOTAL = 3;
+    static final int TYPE_FRET = 0;
+    static final int TYPE_DONOR = 1;
+    static final int TYPE_ACCEPTOR = 2;
+    static final int TYPE_TOTAL = 3;
     private static final String[] TYPE_NAMES = {"FRET efficiency", "Donor (target)", "Acceptor (source)", "Total (D+A)"};
 
     // Quantity the intensity range is applied to. These are mutually exclusive, so they are a
     // combo box beside a single slider rather than one slider each.
-    private static final int FILTER_TOTAL = 0;
-    private static final int FILTER_DONOR = 1;
-    private static final int FILTER_ACCEPTOR = 2;
+    static final int FILTER_TOTAL = 0;
+    static final int FILTER_DONOR = 1;
+    static final int FILTER_ACCEPTOR = 2;
     private static final String[] FILTER_NAMES = {"Total (D+A)", "Donor (target)", "Acceptor (source)"};
 
     // FRET efficiency is plotted over a fixed range, slightly wider than [0,1] so that the
     // noise skirts either side of the physical range stay visible.
-    private static final double FRET_MIN = -0.2;
-    private static final double FRET_MAX = 1.2;
+    static final double FRET_MIN = -0.2;
+    static final double FRET_MAX = 1.2;
 
     // The traces as smFRETAnalyzer wrote them, no corrections applied.
     private static final Corrections NO_CORRECTIONS = new Corrections(0.0, 0.0, 0.0);
@@ -71,20 +71,20 @@ public class smFRETTraceHistogram implements Command {
     private JSlider binsSlider;
     private JSpinner donorBaselineSpinner;
     private JComboBox<String> filterCombo;
-    private final double[] filterMax = new double[FILTER_NAMES.length];
-    private final double[] filterMin = new double[FILTER_NAMES.length];
+    final double[] filterMax = new double[FILTER_NAMES.length];
+    final double[] filterMin = new double[FILTER_NAMES.length];
     private RangeSlider frameRangeSlider;
     private final boolean isHeadless = GraphicsEnvironment.isHeadless();
     private JSpinner leakageSpinner;
     private RangeSlider valueRangeSlider;
-    private int nFrames = 0;
-    private int nSpots = 0;
+    int nFrames = 0;
+    int nSpots = 0;
     private HistogramPanel plotPanel;
     private Histogram result;
-    private float[][] sourceTraces;      // [spot][frame], acceptor.
+    float[][] sourceTraces;      // [spot][frame], acceptor.
     private JLabel statusLabel;
     private boolean suspendUpdates = false;
-    private float[][] targetTraces;      // [spot][frame], donor.
+    float[][] targetTraces;      // [spot][frame], donor.
     private JRadioButton[] typeButtons;
 
     /**
@@ -278,7 +278,7 @@ public class smFRETTraceHistogram implements Command {
     /**
      * The intensity the range slider is currently applied to.
      */
-    private static double filterValue(int filterType, double donor, double acceptor, double total) {
+    static double filterValue(int filterType, double donor, double acceptor, double total) {
         if (filterType == FILTER_DONOR) {
             return donor;
         }
@@ -401,7 +401,7 @@ public class smFRETTraceHistogram implements Command {
      *
      * Only low <= high states are reachable, so callers do not have to order the two values.
      */
-    private static class RangeSlider extends JComponent {
+    static class RangeSlider extends JComponent {
 
         private static final int BAR_HEIGHT = 6;
         private static final int THUMB_SIZE = 13;
@@ -538,7 +538,7 @@ public class smFRETTraceHistogram implements Command {
             }
         }
 
-        private void onKey(int keyCode) {
+        void onKey(int keyCode) {
             int width = high - low;
             if (keyCode == KeyEvent.VK_LEFT) {
                 slide(low - 1, width);
@@ -794,7 +794,7 @@ public class smFRETTraceHistogram implements Command {
      * subtracting a baseline moves the data out from under bounds taken on the raw traces, and an
      * end of the slider parked at a stale extreme would then silently exclude traces.
      */
-    private void computeFilterBounds(Corrections corrections) {
+    void computeFilterBounds(Corrections corrections) {
         for (int f = 0; f < FILTER_NAMES.length; f++) {
             filterMin[f] = Double.MAX_VALUE;
             filterMax[f] = -Double.MAX_VALUE;
