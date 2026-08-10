@@ -65,6 +65,11 @@ public class smFRETPSFVisualizer implements Command {
     private static final String MODEL_DESCRIPTION =
             "Data fit with an Airy disk model with primary spherical aberration";
 
+    // How much trace SNR may be given up before a spotSigma is called worse than the best one.
+    // The maximum of a matched filter is quadratically flat, so quoting it alone would suggest a
+    // precision that is not there - on the example data anything from 1.35 to 2.25 is inside this.
+    private static final double FILTER_TOLERANCE = 0.02;
+
     // Member variables.
     private JSpinner binsSpinner;
     private smFRETPSF.Measurement[] channel = new smFRETPSF.Measurement[2];
@@ -75,6 +80,7 @@ public class smFRETPSFVisualizer implements Command {
     private ImagePlus movie;
     private JSpinner maskSpinner;
     private JSpinner patchSpinner;
+    private JLabel adviceLabel;
     private JCheckBox pedestalBox;
     private ProfilePanel[] profilePanel = new ProfilePanel[2];
     private PsfImagePanel[] imagePanel = new PsfImagePanel[2];
@@ -205,7 +211,7 @@ public class smFRETPSFVisualizer implements Command {
     /**
      * Re-measure both channels with the current settings and redraw.
      */
-    private void update() {
+    void update() {
         if (suspendUpdates) {
             return;
         }
@@ -227,6 +233,7 @@ public class smFRETPSFVisualizer implements Command {
                 imagePanel[c].repaint();
                 profilePanel[c].repaint();
             }
+            updateAdvice();
             statusLabel.setText(describe());
         } catch (smFRETAnalysisException e) {
             smFRETFiles.report(log, e);
@@ -282,6 +289,51 @@ public class smFRETPSFVisualizer implements Command {
         }
         double decade = Math.pow(10.0, Math.floor(Math.log10(smallest)));
         return Math.min(FLOOR_HIGHEST, Math.max(FLOOR_LOWEST, decade));
+    }
+
+    /**
+     * What spotSigma would extract the most trace SNR from the PSF that was just measured.
+     *
+     * smFRETAnalyzer measures a trace with a Gaussian matched filter, and the PSF is not a
+     * Gaussian - an aberrated Airy holds a real fraction of its light out where a Gaussian of the
+     * same core has none, so a filter matched to the core alone throws that away. The best width
+     * is therefore not the fitted core, and how far off it is depends on the aberration: barely
+     * at all below 0.3 waves, half again as wide by 0.5.
+     *
+     * Only the PSF term goes into this, never the fitted pedestal. A flat halo is background, and
+     * putting it in would make the objective grow with the filter area and push the answer up for
+     * a reason that has nothing to do with the molecule.
+     *
+     * spotSigma is one parameter for both channels, so the recommendation is the joint one - the
+     * geometric mean of the two channels' SNR, each over its own best. The per channel answers go
+     * beside it because when they disagree that is worth seeing.
+     */
+    private void updateAdvice() {
+        if ((adviceLabel == null) || (channel[DONOR] == null) || (channel[ACCEPTOR] == null)) {
+            return;
+        }
+
+        smFRETPSF.Fit donor = fitOf(DONOR);
+        smFRETPSF.Fit acceptor = fitOf(ACCEPTOR);
+        if ((donor == null) || (acceptor == null)) {
+            adviceLabel.setText("Not enough of a profile to recommend a spotSigma");
+            return;
+        }
+
+        double[] donorProfile = smFRETPSF.snrProfile(donor);
+        double[] acceptorProfile = smFRETPSF.snrProfile(acceptor);
+        smFRETPSF.FilterOptimum joint = smFRETPSF.optimalFilter(
+                new double[][] {donorProfile, acceptorProfile}, FILTER_TOLERANCE);
+        smFRETPSF.FilterOptimum forDonor = smFRETPSF.optimalFilter(
+                new double[][] {donorProfile}, FILTER_TOLERANCE);
+        smFRETPSF.FilterOptimum forAcceptor = smFRETPSF.optimalFilter(
+                new double[][] {acceptorProfile}, FILTER_TOLERANCE);
+
+        adviceLabel.setText(String.format(
+                "Best SpotSigma for trace SNR: %.2f \u00b7 within %.0f%% of best over %.2f to %.2f"
+                        + " \u00b7 donor %.2f, acceptor %.2f",
+                joint.best, 100.0 * FILTER_TOLERANCE, joint.low, joint.high,
+                forDonor.best, forAcceptor.best));
     }
 
     /** Whichever of the two fits the pedestal checkbox is asking for. */
@@ -697,6 +749,7 @@ public class smFRETPSFVisualizer implements Command {
             for (int c = 0; c < 2; c++) {
                 profilePanel[c].repaint();
             }
+            updateAdvice();
             statusLabel.setText(describe());
         });
 
@@ -735,6 +788,22 @@ public class smFRETPSFVisualizer implements Command {
         modelLabel.setBorder(new EmptyBorder(2, 8, 0, 8));
         modelLabel.setForeground(FIT_COLOR);
 
+        adviceLabel = new JLabel(" ");
+        adviceLabel.setBorder(new EmptyBorder(2, 8, 0, 8));
+        adviceLabel.setToolTipText("<html>The Gaussian filter width that recovers the most trace"
+                + " SNR from the PSF measured here.<br>"
+                + "smFRET Time Traces measures a trace by convolving with a Gaussian of"
+                + " SpotSigma and reading<br>the peak, so this is the matched filter width - and"
+                + " because the PSF is not a Gaussian it is<br>not the fitted core."
+                + " Aberration is the only thing that moves it: barely below 0.3 waves,<br>"
+                + "half again as wide by 0.5.<br><br>"
+                + "<b>Two things it does not know.</b> The noise is taken as background dominated,"
+                + " which is the same<br>assumption the spot finder's SNR already makes."
+                + " And SpotSigma also drives spot <i>finding</i>,<br>not just trace extraction -"
+                + " re-running the spot finder with a new value changes which<br>molecules are"
+                + " found, the masks and the prominence, so this is advice about traces"
+                + " alone.</html>");
+
         statusLabel = new JLabel(" ");
         statusLabel.setBorder(new EmptyBorder(2, 8, 4, 8));
 
@@ -747,8 +816,9 @@ public class smFRETPSFVisualizer implements Command {
         buttons.add(saveCsv);
         buttons.add(savePng);
 
-        JPanel captions = new JPanel(new GridLayout(2, 1));
+        JPanel captions = new JPanel(new GridLayout(3, 1));
         captions.add(modelLabel);
+        captions.add(adviceLabel);
         captions.add(statusLabel);
 
         JPanel bottom = new JPanel(new BorderLayout());
@@ -777,6 +847,7 @@ public class smFRETPSFVisualizer implements Command {
         try (PrintWriter writer = new PrintWriter(chooser.getSelectedFile())) {
             writer.println("# PSF measured from " + spotJSONFile);
             writer.println("# " + MODEL_DESCRIPTION);
+            writer.println("# " + adviceLabel.getText());
             writer.println("# frames " + firstFrame + "-"
                     + Math.min(lastFrame, smFRETChannelMapper.frameCount(movie))
                     + " (as used for spot finding), patch " + patchSpinner.getValue()
@@ -837,7 +908,7 @@ public class smFRETPSFVisualizer implements Command {
             Container panels = plotPanels;
             int titleHeight = 28;
             BufferedImage image = new BufferedImage(panels.getWidth(),
-                    panels.getHeight() + titleHeight + 36, BufferedImage.TYPE_INT_RGB);
+                    panels.getHeight() + titleHeight + 50, BufferedImage.TYPE_INT_RGB);
 
             Graphics2D g2 = image.createGraphics();
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
@@ -858,8 +929,9 @@ public class smFRETPSFVisualizer implements Command {
             g2.setFont(g2.getFont().deriveFont(Font.PLAIN, 11.0f));
             g2.setColor(FIT_COLOR);
             g2.drawString(MODEL_DESCRIPTION, 8, 13);
+            g2.drawString(adviceLabel.getText(), 8, 27);
             g2.setColor(Color.DARK_GRAY);
-            g2.drawString(describe(), 8, 27);
+            g2.drawString(describe(), 8, 41);
             g2.dispose();
 
             ImageIO.write(image, "png", chooser.getSelectedFile());
@@ -903,6 +975,16 @@ public class smFRETPSFVisualizer implements Command {
                     }
                     log.info(CHANNEL_NAMES[c] + ": " + m.samples.spotsUsed + " spots, sigma "
                             + m.withPedestal.sigma + " px, " + m.withPedestal.waves + " waves");
+                }
+
+                if ((channel[DONOR].withPedestal != null)
+                        && (channel[ACCEPTOR].withPedestal != null)) {
+                    smFRETPSF.FilterOptimum joint = smFRETPSF.optimalFilter(new double[][] {
+                        smFRETPSF.snrProfile(channel[DONOR].withPedestal),
+                        smFRETPSF.snrProfile(channel[ACCEPTOR].withPedestal)}, FILTER_TOLERANCE);
+                    log.info(String.format("best spotSigma for trace SNR: %.2f"
+                            + " (within %.0f%% over %.2f to %.2f)",
+                            joint.best, 100.0 * FILTER_TOLERANCE, joint.low, joint.high));
                 }
                 return;
             }

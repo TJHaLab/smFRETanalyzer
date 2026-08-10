@@ -159,6 +159,10 @@ class PSFVisualizerTest {
 
         for (int[] size : new int[][] {{1000, 760}, {640, 480}, {320, 240}, {120, 90}}) {
             javax.swing.JPanel content = plugin.buildContent();
+
+            // The same sequence show() runs. Without it the labels are still blank and the
+            // panels paint an empty measurement, which exercises far less of the drawing.
+            plugin.update();
             content.setSize(size[0], size[1]);
             layOut(content);
 

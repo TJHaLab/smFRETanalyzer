@@ -672,6 +672,140 @@ final class smFRETPSF {
                 Math.sqrt(sumSquares / finalResidual.length));
     }
 
+    /**
+     * The radial grid the filter calculation integrates over.
+     *
+     * Out to fifty pixels because an aberrated Airy still has something there and a wide filter
+     * will reach for it - the integrand is the PSF times the filter, and the filter is what makes
+     * it converge. A step of 0.05 px is far finer than the pixel grid the measurement came off.
+     */
+    static final double[] SNR_RADII = snrRadii();
+
+    private static double[] snrRadii() {
+        double[] radii = new double[1000];
+        for (int i = 0; i < radii.length; i++) {
+            radii[i] = i * 0.05;
+        }
+        return radii;
+    }
+
+    // Where the filter search looks, and how finely. The answer is reported to two decimals, so
+    // a step of 0.005 is already past what is reportable.
+    private static final double FILTER_LOWEST = 0.3;
+    private static final double FILTER_HIGHEST = 6.0;
+    private static final double FILTER_STEP = 0.005;
+
+    /**
+     * The trace SNR a Gaussian filter of this width recovers from this PSF, up to a constant.
+     *
+     * smFRETAnalyzer measures a trace by convolving with a *normalized* Gaussian of width
+     * spotSigma, reading the peak, and multiplying by 4 pi spotSigma^2. For a PSF p(r) carrying N
+     * photons on a background of variance sigma_b^2 per pixel, that gives
+     *
+     *   signal = 4 pi sf^2 . N . integral p(r) G_sf(r) 2 pi r dr
+     *   noise  = 4 pi sf^2 . sigma_b . sqrt(integral G_sf^2 dA) = 2 sf sqrt(pi) . sigma_b
+     *
+     * and the ratio reduces to (1/sf) integral p(r) exp(-r^2 / 2 sf^2) r dr, which is what this
+     * returns. **N and sigma_b drop out**, so where it peaks is a property of the PSF's shape
+     * alone - not of how bright the molecules are or how high the background is.
+     *
+     * The profile need not be normalised: a constant factor scales every filter width equally and
+     * moves neither the maximum nor the relative width of the region around it.
+     *
+     * Two assumptions worth knowing. The noise is taken as background dominated and spatially
+     * uncorrelated, which is the same assumption spotFilterSNR already makes, and the background
+     * estimate is taken as noiseless - it is smoothed at sigma 14, so against a filter of sigma 2
+     * its own noise is smaller by more than an order of magnitude. And this is a continuous
+     * integral where the real thing runs on pixels; see the sweep in PSFFilterSweepTest for how
+     * far apart the two end up.
+     */
+    static double filterResponse(double[] profile, double filterSigma) {
+        double total = 0.0;
+        double step = SNR_RADII[1] - SNR_RADII[0];
+        double scale = 1.0 / (2.0 * filterSigma * filterSigma);
+        for (int i = 0; i < SNR_RADII.length; i++) {
+            double r = SNR_RADII[i];
+            total += profile[i] * Math.exp(-r * r * scale) * r;
+        }
+        return (total * step) / filterSigma;
+    }
+
+    /** The PSF of a fit, sampled where filterResponse wants it. */
+    static double[] snrProfile(Fit fit) {
+        return airyProfile(SNR_RADII, fit.sigma, fit.waves);
+    }
+
+    /**
+     * The best filter width, and how far either side of it barely matters.
+     *
+     * The band is the point of this as much as the maximum is. On the example data the optimum
+     * sits at 1.7 but anything from about 1.3 to 2.2 is within 2% of it, so quoting the maximum
+     * on its own would suggest a precision the measurement does not have and send somebody
+     * chasing a third decimal that is worth nothing.
+     */
+    static final class FilterOptimum {
+        final double best;
+        final double high;
+        final double low;
+        final double tolerance;
+
+        FilterOptimum(double best, double low, double high, double tolerance) {
+            this.best = best;
+            this.low = low;
+            this.high = high;
+            this.tolerance = tolerance;
+        }
+    }
+
+    /**
+     * Where a Gaussian filter recovers the most trace SNR from these PSFs together.
+     *
+     * With one profile this is that channel's optimum. With two it is the geometric mean of the
+     * channels' SNR, each first divided by its own best - so the objective reads as "the typical
+     * fraction of what each channel could manage", and a band drawn at 2% of it means 2% per
+     * channel rather than 2% of a product that would be 1% each. A FRET trace needs both channels
+     * measured well, which is why this is a joint answer and not the donor's.
+     */
+    static FilterOptimum optimalFilter(double[][] profiles, double tolerance) {
+        int steps = (int) Math.round((FILTER_HIGHEST - FILTER_LOWEST) / FILTER_STEP) + 1;
+
+        double[][] response = new double[profiles.length][steps];
+        double[] channelBest = new double[profiles.length];
+        for (int c = 0; c < profiles.length; c++) {
+            for (int i = 0; i < steps; i++) {
+                response[c][i] = filterResponse(profiles[c], FILTER_LOWEST + (i * FILTER_STEP));
+                channelBest[c] = Math.max(channelBest[c], response[c][i]);
+            }
+        }
+
+        double[] objective = new double[steps];
+        int at = 0;
+        for (int i = 0; i < steps; i++) {
+            double product = 1.0;
+            for (int c = 0; c < profiles.length; c++) {
+                product *= (channelBest[c] > 0.0) ? (response[c][i] / channelBest[c]) : 0.0;
+            }
+            objective[i] = Math.pow(product, 1.0 / profiles.length);
+            if (objective[i] > objective[at]) {
+                at = i;
+            }
+        }
+
+        double threshold = objective[at] * (1.0 - tolerance);
+        int low = at;
+        while ((low > 0) && (objective[low - 1] >= threshold)) {
+            low--;
+        }
+        int high = at;
+        while ((high < (steps - 1)) && (objective[high + 1] >= threshold)) {
+            high++;
+        }
+
+        return new FilterOptimum(FILTER_LOWEST + (at * FILTER_STEP),
+                FILTER_LOWEST + (low * FILTER_STEP),
+                FILTER_LOWEST + (high * FILTER_STEP), tolerance);
+    }
+
     /** Weighted residual of the model against the measured profile. */
     private static double[] residual(double[] p, double[] radii, double[] profile,
                                      double[] weights, boolean pedestal) {

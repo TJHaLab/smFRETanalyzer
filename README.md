@@ -174,6 +174,35 @@ Two things about the measurement are worth knowing before reading too much into 
 * **The patch border is not background.** An aberrated Airy still holds around 1% of its peak at the edge of a 10 pixel patch, so subtracting the border median takes real light off every point of the profile. That is negligible against the core and large against the wings, so it is corrected - iteratively, because how much light is on the border is a property of the PSF being fitted. The status line says if that correction failed to settle.
 * **The acceptor is measured on the mapped image**, the same one smFRETAnalyzer measures traces from. Mapping interpolates, so the acceptor core reads slightly broader than it truly is. Measuring the unmapped acceptor would give a truer core but at positions nothing else in the pipeline uses.
 
+#### The SpotSigma it recommends
+
+Under the plots the plugin reports **the SpotSigma that would extract the most trace SNR** from the PSF it just measured, for example `Best SpotSigma for trace SNR: 1.73 - within 2% of best over 1.39 to 2.18 - donor 1.68, acceptor 1.78`.
+
+This is worth having because smFRETAnalyzer measures a trace with a **Gaussian** matched filter - it convolves with a Gaussian of SpotSigma, reads the peak, and scales by `4 pi SpotSigma^2` - while the PSF is not a Gaussian. An aberrated Airy carries a real fraction of its light out where a Gaussian of the same core has none, so a filter matched to the core alone throws that away, and the best width is wider than the fitted core. Working the matched filter through gives a signal-to-noise proportional to
+
+```
+(1 / s) * integral p(r) exp(-r^2 / 2 s^2) r dr
+```
+
+for a filter of width `s` and a PSF `p(r)`. The brightness and the background level cancel, so **where this peaks is a property of the PSF's shape alone**. For a Gaussian PSF it peaks exactly at the PSF's own width, which is the standard matched filter result and is what says the derivation is right.
+
+**Aberration is the only thing that moves it**, and the answer scales with the PSF, so the whole two dimensional question collapses to one multiplier:
+
+| spherical aberration | 0 | 0.1 | 0.2 | 0.3 | 0.4 | 0.5 waves |
+| --- | --- | --- | --- | --- | --- | --- |
+| best SpotSigma / fitted sigma | 0.98 | 0.99 | 1.02 | 1.08 | 1.21 | 1.49 |
+
+So below about 0.3 waves the fitted core is already the right filter, and it only starts to matter past that.
+
+**The band matters more than the number.** A matched filter's response is flat around its peak, so a wide range of settings is nearly as good - on the example data anything from 1.4 to 2.2 is within 2% of the best. That is why the range is quoted alongside, and why `spotsigma=2` in the example macros was never costing anything measurable even though the fitted core is 1.34.
+
+Two things it does not account for:
+
+* **The noise is taken as background dominated** and spatially uncorrelated, which is the same assumption the spot finder's SNR already makes. A trace whose own shot noise dominates is a different calculation.
+* **SpotSigma also drives spot *finding*,** not just trace extraction. Re-running smFRETSpotFinder with a new value changes which molecules are found, the masks and the prominence normalisation, so treat this as advice about traces alone.
+
+The prediction has been checked against the pipeline rather than only derived: on a simulated aberrated field of known PSF, sweeping the real stage 3 over SpotSigma from 1.0 to 3.0 puts the measured peak at 1.80 where the formula predicts 1.81 - so pixel binning, the sub-pixel centring error and the estimated background together move it by less than the sweep can resolve.
+
 #### Outputs:
 
 Nothing is written unless you ask for it:
