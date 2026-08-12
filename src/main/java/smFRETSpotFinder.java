@@ -94,9 +94,6 @@ public class smFRETSpotFinder implements Command, Interactive, org.scijava.Initi
     @Parameter (description = "spot SNR detection threshold", min = "1.0")
     Double spotThreshold = 6.0;
 
-    @Parameter (description = "spot tolerance threshold (for MaximaFinder plugin)", min = "1.0")
-    Double spotTolerance = 5.0;
-
     // The tooltip has to carry three things a number alone cannot: what the number means,
     // which way it points, and how to turn it off. It points the opposite way to every other
     // quality control here - larger is worse - so leaving that to be inferred would invite
@@ -202,6 +199,17 @@ public class smFRETSpotFinder implements Command, Interactive, org.scijava.Initi
                               + " half, or the two added together",
                 label = "Spot channel", choices = {"sum", "donor", "acceptor"})
     String spotChannel = "sum";
+
+    // Deliberately at the bottom of the dialog rather than next to SpotThreshold (issue #10).
+    // Sitting side by side, the two read as a pair of brightness cuts and invited the question
+    // of which one to adjust - but only SpotThreshold is in units anyone can reason about.
+    // SpotTolerance is in raw image units, so its right value moves with the camera, the gain
+    // and the number of frames averaged, which is exactly why it is now estimated rather than
+    // set. Zero means estimate, following backgroundKappa above.
+    @Parameter (label = "Spot tolerance",
+                description = "peak separation depth in image units, 0 to estimate it from the image",
+                min = "0.0", stepSize = "0.1")
+    Double spotTolerance = 0.0;
 
     @Parameter (label = "Find spots", description = "run spot finding with the settings above",
                 callback = "findSpots")
@@ -997,10 +1005,97 @@ public class smFRETSpotFinder implements Command, Interactive, org.scijava.Initi
      *
      * The first element for each spot is whether it passes the current filters.
      */
-    double[][] getMaxima(ImagePlus image){
+    /**
+     * The pixel to pixel noise of an image whose spots are sparse and only ever add to it.
+     *
+     * Robust rather than a plain standard deviation, which on a field of spots measures the
+     * spots. Horizontal first differences kill the illumination profile - a beam wide enough to
+     * need smoothing changes by a fraction of an ADU between neighbours - and the median absolute
+     * deviation of those differences ignores the ones that step onto a spot. The 1.4826 turns a
+     * MAD into a Gaussian sigma and the sqrt(2) undoes the differencing, which adds two pixels'
+     * noise.
+     *
+     * Returns 0 for an image too small to difference, which callers treat as "no estimate".
+     */
+    static double pixelNoise(float[] pixels, int width, int height) {
+        if ((width < 2) || (height < 1)) {
+            return 0.0;
+        }
+
+        double[] diffs = new double[(width - 1) * height];
+        int n = 0;
+        for (int y = 0; y < height; y++) {
+            int row = y * width;
+            for (int x = 1; x < width; x++) {
+                diffs[n++] = pixels[row + x] - pixels[row + x - 1];
+            }
+        }
+
+        double centre = median(diffs, n);
+        for (int i = 0; i < n; i++) {
+            diffs[i] = Math.abs(diffs[i] - centre);
+        }
+        return 1.4826 * median(diffs, n) / Math.sqrt(2.0);
+    }
+
+    /** The median of the first n entries, which this is free to reorder. */
+    private static double median(double[] values, int n) {
+        if (n == 0) {
+            return 0.0;
+        }
+        double[] copy = java.util.Arrays.copyOf(values, n);
+        java.util.Arrays.sort(copy);
+        int middle = n / 2;
+        return ((n % 2) != 0) ? copy[middle] : 0.5 * (copy[middle - 1] + copy[middle]);
+    }
+
+    // Multiples of the noise floor. Swept 2.0 to 4.0 across spot size, density and frame count,
+    // and this is an interior maximum on every measure - 2.5 and 3.5 both fall off it. Notably
+    // it is *not* the 3.5 that reproduces the old fixed 5 at the conditions 5 was swept at:
+    // 5 was already a little too deep for large spots, whose peak amplitude goes as 1/sigma^2.
+    // See the SpotTolerance section of SIMULATION.md.
+    static final double TOLERANCE_SIGMAS = 3.0;
+
+    /**
+     * The tolerance this run will use: the set value, or one estimated from the image.
+     *
+     * MaximumFinder's tolerance is a flood fill depth in raw image units, which is the whole
+     * problem with it as a parameter - what counts as deep enough to separate two peaks depends
+     * on how far the noise floor of the averaged image sits above zero, and that moves with the
+     * camera, the gain and the number of frames averaged. A fixed number therefore means
+     * something different on every setup, and the value swept for one of them silently stops
+     * being right on the next.
+     *
+     * The noise floor is measurable, so the number is derived rather than set.
+     */
+    double effectiveTolerance(Shared image) {
+        if (spotTolerance > 0.0) {
+            log.info("spot tolerance " + spotTolerance + " (set)");
+            return spotTolerance;
+        }
+
+        double noise = pixelNoise(image.pixels, image.width, image.height);
+        if (!(noise > 0.0)) {
+            // Nothing to measure - a uniform image, or one a pixel wide. Fall back rather than
+            // hand MaximumFinder a zero, which would return every noise maximum in the field.
+            log.info("spot tolerance " + TOLERANCE_FALLBACK + " (no noise to measure)");
+            return TOLERANCE_FALLBACK;
+        }
+
+        double estimated = TOLERANCE_SIGMAS * noise;
+        log.info(String.format("spot tolerance %.3f (estimated, noise %.4f x %.1f)",
+                estimated, noise, TOLERANCE_SIGMAS));
+        return estimated;
+    }
+
+    // What an unmeasurable image gets: the value this parameter defaulted to for as long as it
+    // was set by hand, which is right for the conditions it was swept at.
+    static final double TOLERANCE_FALLBACK = 5.0;
+
+    double[][] getMaxima(ImagePlus image, double tolerance){
         ImageProcessor imageProc = image.getProcessor();
         MaximumFinder mf = new MaximumFinder();
-        Polygon spotsPoly = mf.getMaxima(imageProc, spotTolerance, true);
+        Polygon spotsPoly = mf.getMaxima(imageProc, tolerance, true);
 
         double[][] spotsArr = new double[spotsPoly.npoints][3];
         for (int i=0; i < spotsPoly.npoints; i++){
@@ -1645,7 +1740,8 @@ public class smFRETSpotFinder implements Command, Interactive, org.scijava.Initi
             ImagePlus sumImage = new ImagePlus("spot_qc_image", sum.processor);
 
             // find all spots in tne sum image.
-            double[][] allSpots = getMaxima(sumImage);
+            double tolerance = effectiveTolerance(sum);
+            double[][] allSpots = getMaxima(sumImage, tolerance);
             log.info("initial spot number " + allSpots.length);
 
             // filter spots that are near the edges of either channel.
@@ -1715,7 +1811,10 @@ public class smFRETSpotFinder implements Command, Interactive, org.scijava.Initi
             mapping.put("spot sigma", spotSigma);
             mapping.put("spot spacing", spotSpacing);
             mapping.put("spot threshold", spotThreshold);
-            mapping.put("spot tolerance", spotTolerance);
+            // The value used, not the value set. Estimated runs record 0 for the setting, and a
+            // JSON that said 0 would describe a run nobody could reproduce or explain.
+            mapping.put("spot tolerance", tolerance);
+            mapping.put("spot tolerance estimated", spotTolerance <= 0.0);
             mapping.put("start slice", startSlice);
 
             ObjectMapper mapper = new ObjectMapper();
@@ -1767,7 +1866,12 @@ public class smFRETSpotFinder implements Command, Interactive, org.scijava.Initi
         out.put("startSlice", String.valueOf(startSlice));
         out.put("endSlice", String.valueOf(endSlice));
         out.put("spotThreshold", String.valueOf(spotThreshold));
-        out.put("spotTolerance", String.valueOf(spotTolerance));
+        // Under a new key, because the meaning of the old one changed (issue #10). Every user
+        // who has ever run this has 5.0 saved under "spotTolerance" - the default at the time -
+        // and restoring it would pin them to a hand-set value forever and hide the estimate
+        // behind a number they never chose. The old key is simply left to rot; applySettings
+        // ignores what it does not know.
+        out.put("spotToleranceAuto", String.valueOf(spotTolerance));
         out.put("spotContamination", String.valueOf(spotContamination));
         out.put("spotSigma", String.valueOf(spotSigma));
         out.put("cameraBlackLevel", String.valueOf(cameraBlackLevel));
@@ -1794,7 +1898,7 @@ public class smFRETSpotFinder implements Command, Interactive, org.scijava.Initi
         startSlice = asInt(saved.get("startSlice"), startSlice);
         endSlice = asInt(saved.get("endSlice"), endSlice);
         spotThreshold = asDouble(saved.get("spotThreshold"), spotThreshold);
-        spotTolerance = asDouble(saved.get("spotTolerance"), spotTolerance);
+        spotTolerance = asDouble(saved.get("spotToleranceAuto"), spotTolerance);
         spotContamination = asDouble(saved.get("spotContamination"), spotContamination);
         spotSigma = asDouble(saved.get("spotSigma"), spotSigma);
         cameraBlackLevel = asInt(saved.get("cameraBlackLevel"), cameraBlackLevel);

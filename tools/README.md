@@ -46,10 +46,16 @@ large.
 ## The sweeps
 
 ```bash
-python3 ../tools/tune_sweep.py && python3 ../tools/analyze_tune.py   # spotTolerance -> 5
+python3 ../tools/tune_sweep.py && python3 ../tools/analyze_tune.py   # spotTolerance -> 5 (superseded)
+python3 ../tools/tolerance_sweep.py                                  # spotTolerance -> 3.0 x noise
 python3 ../tools/prom_design.py                                      # spotProminence -> 0.4 (retired)
 python3 ../tools/shape_compare.py                                    # ADR-0001
 ```
+
+`tolerance_sweep.py` is what replaced the fixed tolerance with one estimated from the image
+(issue #10). It supersedes `tune_sweep.py` for that parameter but not for the rest: that sweep
+also scores the background estimator and the spot threshold, and it is the only one that holds
+the frame count fixed at 20, which is the assumption the new sweep exists to break.
 
 `spotProminence` no longer exists as a parameter — the contamination model replaced it as the
 last-stage filter, and `SIMULATION.md` is where that default comes from. `prom_design.py` still
