@@ -145,8 +145,10 @@ than just ranking on. Spots predicted at 0.07 average 0.071 in truth; at 0.14,
 
 ### Choosing 0.20
 
-The default follows the same principle as the prominence filter it replaces:
-favour keeping spots, at the cost of letting more contaminated ones through.
+The default favours keeping spots, at the cost of letting more contaminated
+ones through. The last row is what the prominence statistic manages on its
+own at its best fixed cut, which is the bar a score has to clear to be worth
+computing at all.
 
 | threshold | clean spots lost | contaminated spots caught |
 |---|---|---|
@@ -154,7 +156,7 @@ favour keeping spots, at the cost of letting more contaminated ones through.
 | **0.20** | **0.27%** | **60%** |
 | 0.25 | 0.10% | 50% |
 | 0.30 | 0.05% | 39% |
-| *old prominence filter* | *0.32%* | *25%* |
+| *prominence alone, best fixed cut* | *0.32%* | *25%* |
 
 0.20 loses slightly **fewer** clean spots than the prominence default did
 while catching two and a half times as many contaminated ones. On a field at

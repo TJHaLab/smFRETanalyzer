@@ -83,8 +83,18 @@ public class smFRETSpotFinder implements Command, Interactive {
     @Parameter (description = "spot tolerance threshold (for MaximaFinder plugin)", min = "1.0")
     Double spotTolerance = 5.0;
 
-    @Parameter (description = "reject a spot whose predicted contamination exceeds this",
-                label = "Spot contamination", min = "0.0", max = "1.0")
+    // The tooltip has to carry three things a number alone cannot: what the number means,
+    // which way it points, and how to turn it off. It points the opposite way to every other
+    // quality control here - larger is worse - so leaving that to be inferred would invite
+    // exactly the wrong adjustment.
+    @Parameter (label = "Spot contamination", min = "0.0", max = "1.0",
+                description = "<html>Reject a spot when more than this fraction of its signal "
+                        + "is predicted to come from a neighbouring molecule.<br>"
+                        + "0 is a perfectly isolated molecule and 0.5 means half the trace "
+                        + "belongs to something else, so <b>larger is worse</b>.<br>"
+                        + "The default of 0.2 favours keeping spots. Raise it to keep more, "
+                        + "lower it to be stricter, set it to 1 to switch the filter off.<br>"
+                        + "The score is written to the spot table either way.</html>")
     Double spotContamination = 0.20;
 
     @Parameter (description = "spot size (sigma, pixels)", min = "0.2")
