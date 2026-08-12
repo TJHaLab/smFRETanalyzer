@@ -131,6 +131,12 @@ class SpotFinderSettingsTest {
             assertTrue(annotation != null, name + " has no @Parameter");
             assertTrue(!annotation.persist(),
                     name + " would be restored into a new session by SciJava");
+            // And not required, or SciJava raises "is required but never set" as the
+            // dialog opens - it runs an Interactive command immediately, before the user
+            // has chosen anything. The two go together: turning persistence off is what
+            // leaves the field empty at open.
+            assertTrue(!annotation.required(),
+                    name + " being required makes the dialog complain before it is usable");
         }
     }
 }

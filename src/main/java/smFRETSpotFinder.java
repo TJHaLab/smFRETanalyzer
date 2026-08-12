@@ -73,12 +73,16 @@ public class smFRETSpotFinder implements Command, Interactive, org.scijava.Initi
     // remembers for itself - so excluding the paths there is not enough, they have to be
     // excluded here too. A dialog that opens pre-filled with someone else's file looks ready
     // to run and analyses the wrong data if it is.
+    // required = false because an interactive dialog exists before its inputs do. SciJava
+    // runs an Interactive command as it opens, so a required-but-unset input raises "is
+    // required but never set" before the user has had a chance to choose anything. findSpots()
+    // already returns quietly when either file is unset, which is the behaviour this matches.
     @Parameter(description = "image stack to analyze", label = "Image", style = "open",
-               persist = false)
+               persist = false, required = false)
     File inputImageName;
 
     @Parameter(description = "channel to channel mapping JSON file", label = "Mapping JSON file",
-               style = "open", persist = false)
+               style = "open", persist = false, required = false)
     File mappingFile;
 
     @Parameter (description = "first slice for averaging", min = "1")
