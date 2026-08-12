@@ -31,7 +31,7 @@ large.
 | | |
 |---|---|
 | `gen_calib.py` | Random field at real density, log-normal brightness, Gaussian beam. Writes the true background, so the estimator can be scored against a known answer. Behind `backgroundKappa`, `spotMargin`, `spotTolerance` and `spotThreshold`. |
-| `gen_shape.py` | Adds a **labelled** population — singles, doublets at 0.25–3σ, aggregates — so a filter can be scored on what it rejects. Behind `spotProminence` and ADR-0001. |
+| `gen_shape.py` | Adds a **labelled** population — singles, doublets at 0.25–3σ, aggregates — so a filter can be scored on what it rejects. Behind `spotProminence` (since retired) and ADR-0001. |
 
 **Two methodology traps, both of which produced wrong answers first:**
 
@@ -47,18 +47,30 @@ large.
 
 ```bash
 python3 ../tools/tune_sweep.py && python3 ../tools/analyze_tune.py   # spotTolerance -> 5
-python3 ../tools/prom_design.py                                      # spotProminence -> 0.4
+python3 ../tools/prom_design.py                                      # spotProminence -> 0.4 (retired)
 python3 ../tools/shape_compare.py                                    # ADR-0001
 ```
 
+`spotProminence` no longer exists as a parameter — the contamination model replaced it as the
+last-stage filter, and `SIMULATION.md` is where that default comes from. `prom_design.py` still
+runs and still produces 0.4: prominence is measured on every spot and written to the spot table
+as a column, it just no longer rejects anything on its own. It is kept because that number is
+quoted as fact in `docs/adr/` and this is what re-derives it.
+
 `prom_design.py` and `shape_compare.py` expect `shape_<sigma>` directories from `gen_shape.py`;
-`tune_sweep.py` generates its own. Prominence is swept offline from one run per field with the
-filter disabled (`RunTune` takes a negative prominence), since it is the last stage and affects
-nothing upstream.
+`tune_sweep.py` generates its own. The last-stage filter is swept offline from one run per field
+with it disabled, since it affects nothing upstream: one run gives the score of every surviving
+spot and any threshold can then be applied to the table.
+
+**Disabling it means `RunTune ... 1.0`, not a negative number.** That argument was
+`spotProminence` until the contamination model replaced it, and the two run in opposite
+directions - prominence rejected *below* its value, contamination rejects *above* it, clamped to
+[0, 1]. Carrying the old `-1000` sentinel over rejects every spot and scores an empty field,
+which looks like a broken sweep rather than a wrong flag.
 
 ## The Java drivers
 
-`RunTune.java` runs stage 2 on a simulated movie with the tolerance and prominence forced.
+`RunTune.java` runs stage 2 on a simulated movie with the tolerance and contamination forced.
 `Rig.java` runs stages 2 and 3 on a real movie, which is how the `.h5` the viewers need gets
 rebuilt. Both are compiled into the working directory by `rig.py`, or by hand:
 
