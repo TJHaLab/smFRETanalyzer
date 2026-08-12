@@ -107,6 +107,7 @@ public class smFRETPSFVisualizer implements Command {
     private double spotSigma = 2.0;
     private JPanel plotPanels;
     private JLabel statusLabel;
+    private final JLabel[] fitLabels = new JLabel[2];
     private boolean suspendUpdates = false;
 
     // The averaged and split halves. Built once: the frame range is fixed at whatever spot
@@ -251,12 +252,12 @@ public class smFRETPSFVisualizer implements Command {
                 profilePanel[c].repaint();
             }
             updateAdvice();
-            statusLabel.setText(describe());
+            showDescription();
         } catch (smFRETAnalysisException e) {
             smFRETFiles.report(log, e);
         } catch (Exception e) {
             log.info(e);
-            statusLabel.setText("measurement failed: " + e.getMessage());
+            showFailure("measurement failed: " + e.getMessage());
         } finally {
             if (frame != null) {
                 frame.setCursor(Cursor.getDefaultCursor());
@@ -264,39 +265,83 @@ public class smFRETPSFVisualizer implements Command {
         }
     }
 
-    /** The status line: what was measured, and what the fit says. */
-    private String describe() {
+    /**
+     * The measurement summary, as three lines: what was measured, then one fit per channel.
+     *
+     * One line was too long for the window at any sensible size, and it ran the two channels'
+     * numbers together in the middle of itself - which is exactly where they most need reading,
+     * since the reason to open this is usually whether the two halves agree. A line each puts the
+     * same quantities in the same order underneath one another.
+     *
+     * The caveats stay on the first line rather than being attached to a channel. They are
+     * properties of the measurement rather than of either fit, and keeping them off the fit lines
+     * is what leaves those short enough to compare at a glance.
+     */
+    String[] describeLines() {
         smFRETPSF.Measurement donor = channel[DONOR];
-        StringBuilder text = new StringBuilder();
-        text.append(String.format("%,d of %,d spots used · frames %d-%d",
+        StringBuilder head = new StringBuilder();
+        head.append(String.format("%,d of %,d spots used \u00b7 frames %d-%d",
                 donor.samples.spotsUsed, donor.samples.spotsTotal,
                 firstFrame, Math.min(lastFrame, smFRETChannelMapper.frameCount(movie))));
-
-        for (int c = 0; c < 2; c++) {
-            smFRETPSF.Fit fit = fitOf(c);
-            if (fit == null) {
-                text.append(" · ").append(c == DONOR ? "D" : "A").append(" no fit");
-                continue;
-            }
-            text.append(String.format(" · %s sigma %.2f px, %.2f waves",
-                    (c == DONOR) ? "D" : "A", fit.sigma, fit.waves));
-            if (pedestalBox.isSelected()) {
-                text.append(String.format(", pedestal %.3f", fit.pedestal));
-            }
-            text.append(String.format(", rms %.3f", fit.rms));
-        }
 
         int invalid = channel[DONOR].samples.invalidPixels
                 + channel[ACCEPTOR].samples.invalidPixels;
         if (invalid > 0) {
-            text.append(String.format(" \u00b7 %,d px outside the mapped region excluded",
+            head.append(String.format(" \u00b7 %,d px outside the mapped region excluded",
                     invalid));
         }
 
         if (!channel[DONOR].borderSettled) {
-            text.append(" · border correction did not settle, treat the wings with care");
+            head.append(" \u00b7 border correction did not settle, treat the wings with care");
         }
+
+        return new String[] {head.toString(), describeFit(DONOR), describeFit(ACCEPTOR)};
+    }
+
+    /**
+     * One channel's fit.
+     *
+     * Named in full rather than as D and A, which only existed because everything shared a line -
+     * the two image panels above carry these same names, so the caption now matches the thing it
+     * is describing.
+     */
+    private String describeFit(int c) {
+        smFRETPSF.Fit fit = fitOf(c);
+        if (fit == null) {
+            return CHANNEL_NAMES[c] + " \u00b7 no fit";
+        }
+        StringBuilder text = new StringBuilder();
+        text.append(String.format("%s \u00b7 sigma %.2f px, %.2f waves",
+                CHANNEL_NAMES[c], fit.sigma, fit.waves));
+        if (withPedestal()) {
+            text.append(String.format(", pedestal %.3f", fit.pedestal));
+        }
+        text.append(String.format(", rms %.3f", fit.rms));
         return text.toString();
+    }
+
+    /** Put the three summary lines on their labels. */
+    private void showDescription() {
+        String[] lines = describeLines();
+        statusLabel.setText(lines[0]);
+        for (int c = 0; c < 2; c++) {
+            fitLabels[c].setText(lines[c + 1]);
+            fitLabels[c].setVisible(true);
+        }
+    }
+
+    /**
+     * A failure message on the first line, with the fit lines taken away.
+     *
+     * Hidden rather than left alone: numbers from the previous measurement, sitting under a line
+     * saying this one failed, read as though they belong to it.
+     */
+    private void showFailure(String message) {
+        statusLabel.setText(message);
+        for (int c = 0; c < 2; c++) {
+            fitLabels[c].setText(" ");
+            fitLabels[c].setVisible(false);
+        }
     }
 
     /**
@@ -406,7 +451,18 @@ public class smFRETPSFVisualizer implements Command {
         if (channel[c] == null) {
             return null;
         }
-        return pedestalBox.isSelected() ? channel[c].withPedestal : channel[c].psfOnly;
+        return withPedestal() ? channel[c].withPedestal : channel[c].psfOnly;
+    }
+
+    /**
+     * Whether the pedestal is being fitted.
+     *
+     * The box does not exist on the headless path, which measures without ever building a
+     * window, so this has to answer before there are controls to read - the fit that includes
+     * the pedestal is the one the checkbox starts on and the one a headless run reports.
+     */
+    private boolean withPedestal() {
+        return (pedestalBox == null) || pedestalBox.isSelected();
     }
 
     /**
@@ -877,7 +933,7 @@ public class smFRETPSFVisualizer implements Command {
                 profilePanel[c].repaint();
             }
             updateAdvice();
-            statusLabel.setText(describe());
+            showDescription();
         });
 
         JPanel controls = new JPanel(new GridBagLayout());
@@ -947,7 +1003,13 @@ public class smFRETPSFVisualizer implements Command {
         envelopeLabel.setVisible(false);
 
         statusLabel = new JLabel(" ");
-        statusLabel.setBorder(new EmptyBorder(2, 8, 4, 8));
+        statusLabel.setBorder(new EmptyBorder(2, 8, 0, 8));
+
+        // One per channel, under the summary. Same border so the three read as a block.
+        for (int c = 0; c < 2; c++) {
+            fitLabels[c] = new JLabel(" ");
+            fitLabels[c].setBorder(new EmptyBorder(0, 8, (c == 1) ? 4 : 0, 8));
+        }
 
         JButton saveCsv = new JButton("Save CSV");
         saveCsv.addActionListener(e -> onSaveCsv());
@@ -958,11 +1020,20 @@ public class smFRETPSFVisualizer implements Command {
         buttons.add(saveCsv);
         buttons.add(savePng);
 
-        JPanel captions = new JPanel(new GridLayout(4, 1));
-        captions.add(modelLabel);
-        captions.add(adviceLabel);
-        captions.add(envelopeLabel);
-        captions.add(statusLabel);
+        // BoxLayout rather than GridLayout: a grid gives every row the same height whether
+        // or not anything is in it, so the envelope warning reserved a blank row for the
+        // usual case where the PSF is inside the model's range, and six rows of that would
+        // have cost more space than the extra lines themselves. A box skips hidden children
+        // and lets each label take the height it needs.
+        JPanel captions = new JPanel();
+        captions.setLayout(new BoxLayout(captions, BoxLayout.Y_AXIS));
+        for (JLabel caption : new JLabel[] {modelLabel, adviceLabel, envelopeLabel,
+                                            statusLabel, fitLabels[DONOR], fitLabels[ACCEPTOR]}) {
+            // Without this a BoxLayout centres children of differing width, which would
+            // leave the caption block ragged instead of flush with the panels above it.
+            caption.setAlignmentX(Component.LEFT_ALIGNMENT);
+            captions.add(caption);
+        }
 
         JPanel bottom = new JPanel(new BorderLayout());
         bottom.add(controls, BorderLayout.NORTH);
@@ -1050,8 +1121,13 @@ public class smFRETPSFVisualizer implements Command {
         try {
             Container panels = plotPanels;
             int titleHeight = 28;
+
+            // Five caption lines at 14px from a baseline of 13, plus a little descent:
+            // the model, the advice and the three summary lines. Two of those three are new,
+            // so the allowance grew with them rather than silently clipping the acceptor.
+            int captionHeight = 78;
             BufferedImage image = new BufferedImage(panels.getWidth(),
-                    panels.getHeight() + titleHeight + 50, BufferedImage.TYPE_INT_RGB);
+                    panels.getHeight() + titleHeight + captionHeight, BufferedImage.TYPE_INT_RGB);
 
             Graphics2D g2 = image.createGraphics();
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
@@ -1074,7 +1150,11 @@ public class smFRETPSFVisualizer implements Command {
             g2.drawString(MODEL_DESCRIPTION, 8, 13);
             g2.drawString(adviceLabel.getText(), 8, 27);
             g2.setColor(Color.DARK_GRAY);
-            g2.drawString(describe(), 8, 41);
+            int y = 41;
+            for (String line : describeLines()) {
+                g2.drawString(line, 8, y);
+                y += 14;
+            }
             g2.dispose();
 
             ImageIO.write(image, "png", chooser.getSelectedFile());
