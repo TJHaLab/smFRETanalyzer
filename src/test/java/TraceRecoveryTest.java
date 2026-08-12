@@ -1,10 +1,12 @@
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import ch.systemsx.cisd.hdf5.HDF5Factory;
 import ch.systemsx.cisd.hdf5.IHDF5Reader;
 import ij.ImagePlus;
 import java.io.File;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -108,12 +110,12 @@ class TraceRecoveryTest {
         stage3.backgroundAverageNFrames = FRAMES;
         stage3.smfsf.log = log;
         stage3.smfsf.loadMappingJSON(mappingFile.toString());
-        stage3.smfsf.loadMasks(root + "_spotf_masks.tif");
+        stage3.smfsf.loadMasks(smFRETFiles.analysisRoot(root) + "_spotf_masks.tif");
 
         Run result = new Run();
         result.placed = donor;
         result.root = root;
-        result.spots = stage3.smfsf.loadSpotLocations(root + "_spotf_spots.csv");
+        result.spots = stage3.smfsf.loadSpotLocations(smFRETFiles.analysisRoot(root) + "_spotf_spots.csv");
 
         ImagePlus image = smFRETChannelMapper.toFloat(
                 smFRETFiles.openImage(movieFile, "the image"));
@@ -235,10 +237,10 @@ class TraceRecoveryTest {
         stage3.backgroundAverageNFrames = FRAMES;
         stage3.smfsf.log = log;
         stage3.smfsf.loadMappingJSON(mappingFile.toString());
-        stage3.smfsf.loadMasks(root + "_spotf_masks.tif");
+        stage3.smfsf.loadMasks(smFRETFiles.analysisRoot(root) + "_spotf_masks.tif");
 
         Run run = new Run();
-        run.spots = stage3.smfsf.loadSpotLocations(root + "_spotf_spots.csv");
+        run.spots = stage3.smfsf.loadSpotLocations(smFRETFiles.analysisRoot(root) + "_spotf_spots.csv");
         ImagePlus image = smFRETChannelMapper.toFloat(smFRETFiles.openImage(movieFile, "the image"));
         run.traces = stage3.measureTimeTraces(image,
                 stage3.backGroundEstimation(image), run.spots, 2.0, 1.0);
@@ -309,7 +311,7 @@ class TraceRecoveryTest {
         stage3.run();
 
         File h5 = new File(reference.root + ".h5");
-        File traces = new File(reference.root + ".traces");
+        File traces = new File(smFRETFiles.analysisRoot(reference.root) + ".traces");
         assertTrue(h5.exists(), "no .h5 at " + h5);
         assertTrue(traces.exists(), "no .traces at " + traces);
 
@@ -347,14 +349,88 @@ class TraceRecoveryTest {
     void spotFindingWritesItsOutputs(@TempDir File directory) {
         Run run = measure(directory, 2.0, 40, DONOR_PHOTONS);
 
-        for (String suffix : new String[] {"_spotf_finding.json", "_spotf_spots.csv",
-                                           "_spotf_masks.tif", "_spotf_qc_image.tif"}) {
-            File file = new File(run.root + suffix);
+        String analysis = smFRETFiles.analysisRoot(run.root);
+        for (String path : new String[] {run.root + "_spotf_finding.json",
+                                         analysis + "_spotf_spots.csv",
+                                         analysis + "_spotf_masks.tif",
+                                         analysis + "_spotf_qc_image.tif"}) {
+            File file = new File(path);
             assertTrue(file.exists() && (file.length() > 0), "missing or empty: " + file);
         }
 
         // Every spot placed on a clean sparse field should survive every filter.
         assertEquals(run.placed.size(), run.spots.length,
                 "placed " + run.placed.size() + " spots and recovered " + run.spots.length);
+    }
+
+    /**
+     * What the movie's own directory is left holding, which is the whole point of issue #9.
+     *
+     * Asserted as a whole rather than file by file: the complaint was the count, so a new output
+     * appearing beside the movie should fail this even if every file named above is still right.
+     */
+    @Test
+    @DisplayName("only the movie, the two JSONs and the h5 are left beside the movie")
+    void generatedFilesGoInTheAnalysisFolder(@TempDir File directory) throws Exception {
+        StderrLogService log = new StderrLogService();
+        Run reference = measure(directory, 2.0, 40, DONOR_PHOTONS);
+
+        smFRETAnalyzer stage3 = new smFRETAnalyzer();
+        stage3.log = log;
+        stage3.spotJSONFile = new File(reference.root + "_spotf_finding.json");
+        stage3.backgroundAverageNFrames = FRAMES;
+        stage3.run();
+
+        java.util.List<String> beside = new java.util.ArrayList<>();
+        for (File file : directory.listFiles()) {
+            beside.add(file.getName());
+        }
+        java.util.Collections.sort(beside);
+
+        assertEquals(java.util.Arrays.asList("sim.h5", "sim.tif", "sim_analysis",
+                                             "sim_mapping.json", "sim_spotf_finding.json"),
+                     beside, "unexpected contents beside the movie");
+
+        java.util.List<String> inside = new java.util.ArrayList<>();
+        for (File file : new File(directory, "sim_analysis").listFiles()) {
+            inside.add(file.getName());
+        }
+        java.util.Collections.sort(inside);
+
+        assertEquals(java.util.Arrays.asList("sim.traces", "sim_spotf_masks.tif",
+                                             "sim_spotf_qc_image.tif", "sim_spotf_spots.csv"),
+                     inside, "unexpected contents in the analysis folder");
+    }
+
+    /**
+     * An analysis made before the files moved, opened in the trace viewer.
+     *
+     * It cannot be read - the outputs are not where the viewer looks, and nothing goes hunting
+     * for them - so the whole of what this checks is that the user is told which of the two
+     * things went wrong. "Could not find sim_analysis/sim_spotf_qc_image.tif" would send someone
+     * looking for a corrupt analysis whose files are all sitting there, one level up.
+     */
+    @Test
+    @DisplayName("an analysis from before the move says so rather than naming a missing file")
+    void theOldLayoutIsRecognized(@TempDir File directory) throws Exception {
+        StderrLogService log = new StderrLogService();
+        Run reference = measure(directory, 2.0, 40, DONOR_PHOTONS);
+
+        smFRETAnalyzer stage3 = new smFRETAnalyzer();
+        stage3.log = log;
+        stage3.spotJSONFile = new File(reference.root + "_spotf_finding.json");
+        stage3.backgroundAverageNFrames = FRAMES;
+        stage3.run();
+
+        // Put the QC image back where the old layout kept it.
+        Files.move(new File(smFRETFiles.analysisRoot(reference.root) + "_spotf_qc_image.tif").toPath(),
+                   new File(reference.root + "_spotf_qc_image.tif").toPath());
+
+        smFRETTraceVisualizer viewer = new smFRETTraceVisualizer();
+        viewer.log = log;
+        smFRETAnalysisException thrown = assertThrows(smFRETAnalysisException.class,
+                () -> viewer.load(new File(reference.root + "_spotf_finding.json")));
+        assertTrue(thrown.getMessage().contains("sim_analysis"), thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("re-run"), thrown.getMessage());
     }
 }

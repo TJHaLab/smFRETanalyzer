@@ -64,10 +64,10 @@ for nspots in DENSITIES:
                 check=True, capture_output=True, text=True)
 
             # Kept so the sweep can be re-scored without re-running any Java.
-            shutil.copy(os.path.join(d, "sim_spotf_spots.csv"),
+            shutil.copy(os.path.join(d, "sim_analysis", "sim_spotf_spots.csv"),
                         os.path.join(d, f"spots_tol{tol}.csv"))
 
-            spots = np.genfromtxt(os.path.join(d, "sim_spotf_spots.csv"), delimiter=",",
+            spots = np.genfromtxt(os.path.join(d, "sim_analysis", "sim_spotf_spots.csv"), delimiter=",",
                                   names=True, dtype=None)
             px = np.atleast_1d(spots["x"]).astype(float)
             py = np.atleast_1d(spots["y"]).astype(float)
@@ -86,11 +86,11 @@ for nspots in DENSITIES:
             recall = float(found[findable].mean()) if findable.any() else 0.0
 
             # Background estimate quality where it actually gets subtracted.
-            est = tifffile.imread(os.path.join(d, "sim_spotf_bg_smooth.tif")).astype(np.float64)
+            est = tifffile.imread(os.path.join(d, "sim_analysis", "sim_spotf_bg_smooth.tif")).astype(np.float64)
             err = est[sy, sx] - truth_bg[sy, sx]
 
             # How much of the field the mask left usable.
-            masks = tifffile.imread(os.path.join(d, "sim_spotf_masks.tif")).astype(np.float64)
+            masks = tifffile.imread(os.path.join(d, "sim_analysis", "sim_spotf_masks.tif")).astype(np.float64)
             trusted = float(((masks[0] > 0) & (masks[1] > 0)).mean())
 
             rows.append({"spots": nspots, "sigma": sigma, "tol": tol,

@@ -130,7 +130,8 @@ class PSFVisualizerTest {
     @DisplayName("a missing input is named")
     void missingInputIsNamed(@TempDir File directory) {
         File json = spotFinderOutput(directory);
-        assertTrue(new File(directory, "psf_spotf_spots.csv").delete(), "could not stage the fault");
+        assertTrue(new File(directory, "psf_analysis/psf_spotf_spots.csv").delete(),
+                "could not stage the fault");
 
         smFRETPSFVisualizer plugin = visualizer(json);
         smFRETAnalysisException thrown = assertThrows(smFRETAnalysisException.class,
