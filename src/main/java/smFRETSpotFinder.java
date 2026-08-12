@@ -68,10 +68,17 @@ public class smFRETSpotFinder implements Command, Interactive, org.scijava.Initi
     @Parameter
     UIService ui;
 
-    @Parameter(description = "image stack to analyze", label = "Image", style = "open")
+    // persist = false, or SciJava restores the last movie into a new session. It saves every
+    // @Parameter when a module completes, which is independent of the settings this class
+    // remembers for itself - so excluding the paths there is not enough, they have to be
+    // excluded here too. A dialog that opens pre-filled with someone else's file looks ready
+    // to run and analyses the wrong data if it is.
+    @Parameter(description = "image stack to analyze", label = "Image", style = "open",
+               persist = false)
     File inputImageName;
 
-    @Parameter(description = "channel to channel mapping JSON file", label = "Mapping JSON file", style = "open")
+    @Parameter(description = "channel to channel mapping JSON file", label = "Mapping JSON file",
+               style = "open", persist = false)
     File mappingFile;
 
     @Parameter (description = "first slice for averaging", min = "1")

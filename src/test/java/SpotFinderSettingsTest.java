@@ -111,4 +111,26 @@ class SpotFinderSettingsTest {
         fresh.applySettings(new HashMap<>());
         assertEquals(6.0, fresh.spotThreshold, 1.0e-9);
     }
+
+    /**
+     * SciJava's own persistence must be off for the two file parameters.
+     *
+     * <p>It is a separate mechanism from the settings map above: SciJava saves every
+     * @Parameter when a module completes, so a macro run writes the paths and the next dialog
+     * restores them. Excluding them from currentSettings() does not prevent that - only
+     * persist = false does. Asserted on the annotation because the failure is invisible in
+     * any headless test: the plugin works perfectly and just opens pointing at the wrong file.
+     */
+    @Test
+    @DisplayName("SciJava is told not to persist the file parameters")
+    void filePathsHavePersistDisabled() throws NoSuchFieldException {
+        for (String name : new String[] {"inputImageName", "mappingFile"}) {
+            org.scijava.plugin.Parameter annotation = smFRETSpotFinder.class
+                    .getDeclaredField(name)
+                    .getAnnotation(org.scijava.plugin.Parameter.class);
+            assertTrue(annotation != null, name + " has no @Parameter");
+            assertTrue(!annotation.persist(),
+                    name + " would be restored into a new session by SciJava");
+        }
+    }
 }
