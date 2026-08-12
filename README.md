@@ -1,5 +1,7 @@
 ## smFRETAnalyzer ##
 
+[![tests](https://github.com/TJHaLab/smFRETanalyzer/actions/workflows/tests.yml/badge.svg)](https://github.com/TJHaLab/smFRETanalyzer/actions/workflows/tests.yml)
+
 This is multipart FIJI/ImageJ plugin for analyzing single molecule FRET experiment data.
 
 Most of the defaults were chosen by running the analysis against simulated data with a known right answer. This file describes what the parameters do; [SIMULATION.md](SIMULATION.md) records how each default was arrived at and what it assumes, for anyone deciding whether a default suits their data.
