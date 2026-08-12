@@ -164,6 +164,42 @@ while catching two and a half times as many contaminated ones. On a field at
 the density of the example data it rejects about 10% of spots and loses no
 clean ones at all.
 
+### What it rejects on real data, and why that is not a bug
+
+On `hel1` the default rejects **30%** of the spots that reach it, against
+about 10% on the simulated fields that were matched to hel1's PSF and
+density. That gap has a mundane explanation and it is worth recording,
+because it looks alarming.
+
+hel1's spots are dimmer on a brighter background than those fields were:
+spot height over background is **0.57** against 1.1. Grouping every simulated
+field by that same ratio:
+
+| spot height / background | fields | true contamination | predicted |
+|---|---|---|---|
+| below 0.60 | 39 | 0.104 | 0.129 |
+| 0.60 - 0.90 | 34 | 0.052 | 0.086 |
+| 0.90 - 1.20 | 39 | 0.055 | 0.059 |
+| 1.20 - 1.60 | 80 | 0.036 | 0.038 |
+| above 1.60 | 48 | 0.014 | 0.027 |
+
+hel1 predicts a median of 0.141 at a ratio of 0.57, and simulated fields in
+that bin predict 0.129 against a **true** median of 0.104 - a bias of -0.001.
+The score is doing on real data what it does in simulation at the same
+brightness. A dim field genuinely carries more contamination, because the
+same neighbour light is a larger share of a smaller signal.
+
+So 30% on hel1 is a statement about hel1, not about the filter. If losing
+that many is not acceptable operationally, 0.25 or 0.30 is the adjustment -
+but the spots being dropped really are the contaminated ones.
+
+Two dead ends are recorded so they are not retried. The pedestal that a PSF
+fit leaves under real data **cannot** be per-molecule scattered light: a 3% of
+peak halo needs 124% of a molecule's flux at halo sigma 4 and 711% at sigma
+20, more scattered light than emitted light at every width. And bit depth is
+irrelevant: the analysis image is a 30 frame average, so it carries ~128000
+distinct values whether the movie was 8 or 16 bit.
+
 ### What it does not cover
 
 * **The PSF.** A model trained at one PSF does not transfer to another - at
