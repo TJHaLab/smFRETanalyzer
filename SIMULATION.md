@@ -117,13 +117,13 @@ working from the spot list alone.
 
 ### What it uses
 
-42 numbers per spot, all available the moment spot finding finishes: the
+43 numbers per spot, all available the moment spot finding finishes: the
 spot's own SNR and prominence, its flux and local background in
 photoelectrons, the shape of its radial profile out to 12 pixels, second
 moment and single-Gaussian-fit statistics, how many other spots sit within 5,
 10 and 15 pixels, and what the detected spots alone predict should be landing
 on it. These feed a small gradient boosted ensemble - 100 trees of depth 3,
-about 1200 nodes - trained on 55308 simulated spots across 240 fields.
+1484 nodes - trained on 65881 simulated spots across 240 fields.
 
 ### How well it works
 
@@ -146,9 +146,10 @@ than just ranking on. Spots predicted at 0.07 average 0.071 in truth; at 0.14,
 ### Choosing 0.20
 
 The default favours keeping spots, at the cost of letting more contaminated
-ones through. The last row is what the prominence statistic manages on its
-own at its best fixed cut, which is the bar a score has to clear to be worth
-computing at all.
+ones through. The last row is prominence thresholded at 0.4 - not its best
+possible cut, but the one that loses about the same fraction of clean spots
+as the chosen default, so the two rows are a like-for-like comparison of what
+each catches at a matched risk of throwing away a real molecule.
 
 | threshold | clean spots lost | contaminated spots caught |
 |---|---|---|
@@ -156,7 +157,7 @@ computing at all.
 | **0.20** | **0.27%** | **60%** |
 | 0.25 | 0.10% | 50% |
 | 0.30 | 0.05% | 39% |
-| *prominence alone, best fixed cut* | *0.32%* | *25%* |
+| *prominence thresholded at 0.4* | *0.32%* | *25%* |
 
 0.20 loses slightly **fewer** clean spots than the prominence default did
 while catching two and a half times as many contaminated ones. On a field at
