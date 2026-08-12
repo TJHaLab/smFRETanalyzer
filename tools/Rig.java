@@ -13,7 +13,8 @@ public class Rig {
         s2.inputImageName = new File(args[0], args[1]);
         s2.mappingFile = new File(args[2]);
         s2.startSlice = 1; s2.endSlice = 30;
-        s2.spotThreshold = 6.0; s2.spotTolerance = 5.0; s2.spotProminence = 0.4;
+        // The shipped default, so the .h5 this rebuilds is the one a user would get.
+        s2.spotThreshold = 6.0; s2.spotTolerance = 5.0; s2.spotContamination = 0.20;
         s2.spotSigma = 2.0; s2.cameraBlackLevel = 5; s2.cameraGain = 1.0;
         s2.spotSpacing = 2; s2.edgeMargin = 5; s2.backgroundKappa = 0.0;
         s2.run();

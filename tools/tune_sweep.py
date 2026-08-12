@@ -60,7 +60,9 @@ for nspots in DENSITIES:
                 # diagnostic image, which is off unless this is set.
                 [JAVA, "-Djava.awt.headless=true", "-Dsmfret.diagnostics=true", "-Xmx8g",
                  "-cp", os.pathsep.join([".", CLASSES, CP]),
-                 "RunTune", d, str(sigma), str(tol), "-1000.0", str(FRAMES), str(THRESHOLD)],
+                 # Contamination 1 is the filter off - it rejects *above* its value. This used
+                 # to be a prominence of -1000, which was off for the opposite reason.
+                 "RunTune", d, str(sigma), str(tol), "1.0", str(FRAMES), str(THRESHOLD)],
                 check=True, capture_output=True, text=True)
 
             # Kept so the sweep can be re-scored without re-running any Java.
