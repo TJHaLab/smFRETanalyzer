@@ -123,6 +123,38 @@ class PSFVisualizerTest {
     }
 
     /**
+     * The summary is three lines: what was measured, then a fit each.
+     *
+     * It used to be one, which ran off the edge of the window and buried the two channels' fitted
+     * values in the middle of itself - where they are least readable and most often the thing
+     * being read, since comparing the halves is usually why this is open. The regression worth
+     * guarding is not the wording but the split: no fitted number may reappear on the first line.
+     */
+    @Test
+    @DisplayName("the summary puts each channel's fit on its own line")
+    void theSummaryIsThreeLines(@TempDir File directory) {
+        File json = spotFinderOutput(directory);
+        smFRETPSFVisualizer plugin = visualizer(json);
+        plugin.run();
+
+        String[] lines = plugin.describeLines();
+        assertEquals(3, lines.length, "one summary line and one per channel");
+
+        assertTrue(lines[0].contains("spots used"), lines[0]);
+        assertTrue(lines[0].contains("frames"), lines[0]);
+        assertFalse(lines[0].contains("sigma"),
+                "the fitted values belong on their own lines: " + lines[0]);
+        assertFalse(lines[0].contains("rms"), lines[0]);
+
+        assertTrue(lines[1].startsWith("Donor (target)"), lines[1]);
+        assertTrue(lines[2].startsWith("Acceptor (source)"), lines[2]);
+        for (int c = 1; c <= 2; c++) {
+            assertTrue(lines[c].contains("sigma") && lines[c].contains("waves")
+                    && lines[c].contains("rms"), lines[c]);
+        }
+    }
+
+    /**
      * A movie or a spot table that has moved since spot finding ran is the usual failure, and the
      * message has to name the file rather than arriving as a null somewhere downstream.
      */
