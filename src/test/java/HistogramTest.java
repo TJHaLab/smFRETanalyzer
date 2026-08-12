@@ -19,10 +19,6 @@ import org.junit.jupiter.api.Test;
  */
 class HistogramTest {
 
-    /** Wide enough that the intensity filter never excludes anything. */
-    private static final double NO_LOW_LIMIT = -1.0e9;
-    private static final double NO_HIGH_LIMIT = 1.0e9;
-
     private static smFRETTraceHistogram withTraces(float[][] donor, float[][] acceptor) {
         smFRETTraceHistogram histogram = new smFRETTraceHistogram();
         histogram.targetTraces = donor;
@@ -39,8 +35,7 @@ class HistogramTest {
     private static double singleValue(smFRETTraceHistogram histogram, int type,
                                       smFRETTraceHistogram.Corrections corrections) {
         smFRETTraceHistogram.Histogram result = histogram.computeHistogram(type, 1,
-                histogram.nFrames, smFRETTraceHistogram.FILTER_TOTAL,
-                NO_LOW_LIMIT, NO_HIGH_LIMIT, 10, corrections);
+                histogram.nFrames, smFRETTraceHistogram.Filters.none(), 10, corrections);
         assertEquals(1, result.nSpotsUsed, "the fixture should contribute exactly one point");
         return result.lo;
     }
@@ -55,7 +50,7 @@ class HistogramTest {
         int bins = 1400;
         smFRETTraceHistogram.Histogram result = histogram.computeHistogram(
                 smFRETTraceHistogram.TYPE_FRET, 1, histogram.nFrames,
-                smFRETTraceHistogram.FILTER_TOTAL, NO_LOW_LIMIT, NO_HIGH_LIMIT, bins, corrections);
+                smFRETTraceHistogram.Filters.none(), bins, corrections);
 
         assertEquals(1, result.nPoints, "the fixture should bin exactly one point");
         for (int i = 0; i < bins; i++) {
@@ -83,13 +78,11 @@ class HistogramTest {
         smFRETTraceHistogram histogram = withTraces(donor, acceptor);
 
         smFRETTraceHistogram.Histogram total = histogram.computeHistogram(
-                smFRETTraceHistogram.TYPE_TOTAL, 1, 3, smFRETTraceHistogram.FILTER_TOTAL,
-                NO_LOW_LIMIT, NO_HIGH_LIMIT, 16,
+                smFRETTraceHistogram.TYPE_TOTAL, 1, 3, smFRETTraceHistogram.Filters.none(), 16,
                 new smFRETTraceHistogram.Corrections(0.0, 0.0, 1.0));
 
         smFRETTraceHistogram.Histogram rawAcceptor = histogram.computeHistogram(
-                smFRETTraceHistogram.TYPE_ACCEPTOR, 1, 3, smFRETTraceHistogram.FILTER_TOTAL,
-                NO_LOW_LIMIT, NO_HIGH_LIMIT, 16, none());
+                smFRETTraceHistogram.TYPE_ACCEPTOR, 1, 3, smFRETTraceHistogram.Filters.none(), 16, none());
 
         assertArrayEquals(rawAcceptor.counts, total.counts, "bin counts");
         assertEquals(rawAcceptor.lo, total.lo, 1.0e-12, "lower edge");
@@ -178,15 +171,13 @@ class HistogramTest {
         smFRETTraceHistogram histogram = withTraces(donor, acceptor);
 
         smFRETTraceHistogram.Histogram unfiltered = histogram.computeHistogram(
-                smFRETTraceHistogram.TYPE_TOTAL, 1, 3, smFRETTraceHistogram.FILTER_TOTAL,
-                NO_LOW_LIMIT, NO_HIGH_LIMIT, 8, none());
+                smFRETTraceHistogram.TYPE_TOTAL, 1, 3, smFRETTraceHistogram.Filters.none(), 8, none());
         assertEquals(2, unfiltered.nSpotsUsed);
 
         // The second trace averages 1900, well inside a maximum of 3000 - but one of its frames
         // is 5100, so it goes entirely.
         smFRETTraceHistogram.Histogram filtered = histogram.computeHistogram(
-                smFRETTraceHistogram.TYPE_TOTAL, 1, 3, smFRETTraceHistogram.FILTER_TOTAL,
-                -1.0e9, 3000.0, 8, none());
+                smFRETTraceHistogram.TYPE_TOTAL, 1, 3, smFRETTraceHistogram.Filters.only(smFRETTraceHistogram.FILTER_TOTAL, -1.0e9, 3000.0), 8, none());
         assertEquals(1, filtered.nSpotsUsed, "the spiking trace should be dropped whole");
     }
 
@@ -199,9 +190,78 @@ class HistogramTest {
 
         // A maximum of 100 on the acceptor keeps it; the same maximum on the total does not.
         assertEquals(1, histogram.computeHistogram(smFRETTraceHistogram.TYPE_TOTAL, 1, 2,
-                smFRETTraceHistogram.FILTER_ACCEPTOR, -1.0e9, 100.0, 8, none()).nSpotsUsed);
+                smFRETTraceHistogram.Filters.only(smFRETTraceHistogram.FILTER_ACCEPTOR, -1.0e9, 100.0), 8, none()).nSpotsUsed);
         assertEquals(0, histogram.computeHistogram(smFRETTraceHistogram.TYPE_TOTAL, 1, 2,
-                smFRETTraceHistogram.FILTER_TOTAL, -1.0e9, 100.0, 8, none()).nSpotsUsed);
+                smFRETTraceHistogram.Filters.only(smFRETTraceHistogram.FILTER_TOTAL, -1.0e9, 100.0), 8, none()).nSpotsUsed);
+    }
+
+    /**
+     * The three ranges are ANDed, which is the whole of issue #8.
+     *
+     * They used to be a combo box beside one slider, so only one could be live and filtering on
+     * donor brightness meant giving up filtering on total brightness. Nothing about the two made
+     * them alternatives except the widget.
+     */
+    @Test
+    @DisplayName("a trace has to pass all three ranges, not the selected one")
+    void allThreeRangesApply() {
+        // Donor 500, acceptor 10, total 510.
+        float[][] donor = {{500.0f, 500.0f}};
+        float[][] acceptor = {{10.0f, 10.0f}};
+        smFRETTraceHistogram histogram = withTraces(donor, acceptor);
+
+        double[] min = {-1.0e9, -1.0e9, -1.0e9};
+        double[] max = {1.0e9, 1.0e9, 1.0e9};
+
+        // Wide open on all three keeps it, which is the state the sliders start in.
+        assertEquals(1, kept(histogram, new smFRETTraceHistogram.Filters(min, max)));
+
+        // A donor range that keeps it, and an acceptor range that does not. Under the old
+        // single filter this combination could not be expressed at all.
+        min[smFRETTraceHistogram.FILTER_DONOR] = 100.0;
+        max[smFRETTraceHistogram.FILTER_DONOR] = 900.0;
+        assertEquals(1, kept(histogram, new smFRETTraceHistogram.Filters(min, max)),
+                "the donor range alone should keep it");
+
+        max[smFRETTraceHistogram.FILTER_ACCEPTOR] = 5.0;
+        assertEquals(0, kept(histogram, new smFRETTraceHistogram.Filters(min, max)),
+                "the acceptor range should drop it even though the donor range keeps it");
+    }
+
+    /**
+     * Which filter did the rejecting, counted per filter rather than once per trace.
+     *
+     * A trace failing two of them counts in both, so the counts do not sum to the number
+     * rejected. That is deliberate: it is what says whether widening one slider on its own
+     * would bring anything back, which is the question three live sliders create.
+     */
+    @Test
+    @DisplayName("rejections are attributed to every filter that would have caused them")
+    void rejectionsAreAttributed() {
+        float[][] donor = {{500.0f, 500.0f}};
+        float[][] acceptor = {{10.0f, 10.0f}};
+        smFRETTraceHistogram histogram = withTraces(donor, acceptor);
+
+        double[] min = {-1.0e9, -1.0e9, -1.0e9};
+        double[] max = {1.0e9, 1.0e9, 1.0e9};
+        max[smFRETTraceHistogram.FILTER_DONOR] = 1.0;      // 500 fails this
+        max[smFRETTraceHistogram.FILTER_TOTAL] = 1.0;      // 510 fails this too
+
+        smFRETTraceHistogram.Histogram result = histogram.computeHistogram(
+                smFRETTraceHistogram.TYPE_TOTAL, 1, 2,
+                new smFRETTraceHistogram.Filters(min, max), 8, none());
+
+        assertEquals(0, result.nSpotsUsed, "nothing should survive");
+        assertEquals(1, result.nRejectedBy[smFRETTraceHistogram.FILTER_DONOR], "donor");
+        assertEquals(1, result.nRejectedBy[smFRETTraceHistogram.FILTER_TOTAL], "total");
+        assertEquals(0, result.nRejectedBy[smFRETTraceHistogram.FILTER_ACCEPTOR],
+                "the acceptor range was wide open and must not be blamed");
+    }
+
+    /** Traces surviving the three ranges. */
+    private static int kept(smFRETTraceHistogram histogram, smFRETTraceHistogram.Filters filters) {
+        return histogram.computeHistogram(smFRETTraceHistogram.TYPE_TOTAL, 1, 2,
+                filters, 8, none()).nSpotsUsed;
     }
 
     /**
@@ -219,8 +279,7 @@ class HistogramTest {
         smFRETTraceHistogram histogram = withTraces(donor, acceptor);
 
         smFRETTraceHistogram.Histogram result = histogram.computeHistogram(
-                smFRETTraceHistogram.TYPE_FRET, 1, 1, smFRETTraceHistogram.FILTER_TOTAL,
-                NO_LOW_LIMIT, NO_HIGH_LIMIT, 10, none());
+                smFRETTraceHistogram.TYPE_FRET, 1, 1, smFRETTraceHistogram.Filters.none(), 10, none());
 
         assertEquals(smFRETTraceHistogram.FRET_MIN, result.lo, 1.0e-12, "the fixed lower edge");
         assertEquals(2, result.nSpotsUsed, "both traces are in range for the intensity filter");
@@ -236,8 +295,7 @@ class HistogramTest {
         smFRETTraceHistogram histogram = withTraces(donor, acceptor);
 
         smFRETTraceHistogram.Histogram result = histogram.computeHistogram(
-                smFRETTraceHistogram.TYPE_FRET, 1, 1, smFRETTraceHistogram.FILTER_TOTAL,
-                NO_LOW_LIMIT, NO_HIGH_LIMIT, 10, none());
+                smFRETTraceHistogram.TYPE_FRET, 1, 1, smFRETTraceHistogram.Filters.none(), 10, none());
 
         assertEquals(1, result.nPoints, "the divide by zero trace should not be binned");
         for (int count : result.counts) {
@@ -297,8 +355,7 @@ class HistogramTest {
         smFRETTraceHistogram histogram = withTraces(donor, acceptor);
 
         smFRETTraceHistogram.Histogram result = histogram.computeHistogram(
-                smFRETTraceHistogram.TYPE_DONOR, 2, 4, smFRETTraceHistogram.FILTER_TOTAL,
-                NO_LOW_LIMIT, NO_HIGH_LIMIT, 10, none());
+                smFRETTraceHistogram.TYPE_DONOR, 2, 4, smFRETTraceHistogram.Filters.none(), 10, none());
 
         // Frames 2, 3 and 4 hold 10, 20 and 30, so three frames averaging 20.
         assertEquals(20.0, result.lo, 1.0e-9);
