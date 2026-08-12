@@ -162,7 +162,11 @@ class SpotQualityForestTest {
     void theResponsePeaksOffCentre() {
         smFRETSpotQuality.Forest forest = smFRETSpotQuality.shipped();
 
-        assertEquals(forest.responseAt(0.0), forest.responseAt(1.0), 1.0e-9,
+        // Equal to a few parts in 1e8 rather than exactly. The symmetry is exact in
+        // principle; the table is not, because an Airy pattern has no closed form pixel
+        // integral and is sub-sampled. An earlier version of this file asserted 1e-9 and
+        // passed only because the table was being written with seven digits.
+        assertEquals(forest.responseAt(0.0), forest.responseAt(1.0), 1.0e-7,
                 "zero and one pixel are equidistant from the kernel centre");
         assertTrue(forest.responseAt(0.5) > forest.responseAt(0.0),
                 "the peak sits at the pixel centre, half a pixel out");
