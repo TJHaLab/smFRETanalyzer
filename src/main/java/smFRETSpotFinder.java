@@ -87,7 +87,11 @@ public class smFRETSpotFinder implements Command, Interactive {
     // which way it points, and how to turn it off. It points the opposite way to every other
     // quality control here - larger is worse - so leaving that to be inferred would invite
     // exactly the wrong adjustment.
-    @Parameter (label = "Spot contamination", min = "0.0", max = "1.0",
+    // stepSize is not optional here. SciJava defaults a number widget's step to 1, and with
+    // min 0 and max 1 that leaves a spinner offering exactly two values - the parameter reads
+    // as integer-only in the dialog. Every Double parameter in this class inherits that
+    // default; it only becomes fatal where the range is narrower than one step.
+    @Parameter (label = "Spot contamination", min = "0.0", max = "1.0", stepSize = "0.01",
                 description = "<html>Reject a spot when more than this fraction of its signal "
                         + "is predicted to come from a neighbouring molecule.<br>"
                         + "0 is a perfectly isolated molecule and 0.5 means half the trace "
@@ -97,7 +101,7 @@ public class smFRETSpotFinder implements Command, Interactive {
                         + "The score is written to the spot table either way.</html>")
     Double spotContamination = 0.20;
 
-    @Parameter (description = "spot size (sigma, pixels)", min = "0.2")
+    @Parameter (description = "spot size (sigma, pixels)", min = "0.2", stepSize = "0.1")
     Double spotSigma = 2.0;
 
     @Parameter (description = "camera offset / black level", min = "0")
@@ -173,7 +177,7 @@ public class smFRETSpotFinder implements Command, Interactive {
         return Math.max(spotMarginFloor, (int) Math.round(spotMarginScale * sigma));
     }
 
-    @Parameter (description = "background clipping threshold, 0 to derive it from the spot size", min = "0.0")
+    @Parameter (description = "background clipping threshold, 0 to derive it from the spot size", min = "0.0", stepSize = "0.1")
     Double backgroundKappa = 0.0;
 
     // Which image spots are found in. "sum" is what this always did, and stays the default.
