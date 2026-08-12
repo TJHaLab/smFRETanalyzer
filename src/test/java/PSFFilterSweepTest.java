@@ -179,7 +179,7 @@ class PSFFilterSweepTest {
         finder.spotSigma = TRUE_SIGMA;
         finder.spotThreshold = 6.0;
         finder.spotTolerance = 5.0;
-        finder.spotProminence = 0.4;
+        finder.spotContamination = 1.0;   // no quality filtering in this test
         finder.cameraBlackLevel = 0;
         finder.cameraGain = 1.0;
         finder.spotSpacing = 3;

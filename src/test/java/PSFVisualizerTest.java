@@ -60,7 +60,7 @@ class PSFVisualizerTest {
         finder.spotSigma = 2.0;
         finder.spotThreshold = 6.0;
         finder.spotTolerance = 5.0;
-        finder.spotProminence = 0.4;
+        finder.spotContamination = 1.0;   // no quality filtering in this test
         finder.cameraBlackLevel = 0;
         finder.cameraGain = 1.0;
         finder.spotSpacing = 3;
@@ -213,7 +213,10 @@ class PSFVisualizerTest {
         double[][] spots = plugin.spots();
         assertTrue(spots.length > 0, "no spots loaded");
         for (double[] spot : spots) {
-            assertEquals(4, spot.length, "x, y, snr, prominence");
+            // Width follows smFRETSpotFinder.columnHeaders, and this assertion is here to
+            // fail when a filter is added without the headers being updated with it - the
+            // round trip only lines up while the two agree.
+            assertEquals(5, spot.length, "x, y, snr, prominence, contamination");
             assertTrue((spot[0] >= 0) && (spot[0] < HALF_WIDTH),
                     "x out of the half frame: " + spot[0]);
             assertTrue((spot[1] >= 0) && (spot[1] < HEIGHT),

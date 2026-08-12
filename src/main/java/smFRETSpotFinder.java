@@ -83,8 +83,9 @@ public class smFRETSpotFinder implements Command, Interactive {
     @Parameter (description = "spot tolerance threshold (for MaximaFinder plugin)", min = "1.0")
     Double spotTolerance = 5.0;
 
-    @Parameter (description = "spot prominence, as a fraction of an isolated spot", min = "0.0")
-    Double spotProminence = 0.4;
+    @Parameter (description = "reject a spot whose predicted contamination exceeds this",
+                label = "Spot contamination", min = "0.0", max = "1.0")
+    Double spotContamination = 0.20;
 
     @Parameter (description = "spot size (sigma, pixels)", min = "0.2")
     Double spotSigma = 2.0;
@@ -272,7 +273,12 @@ public class smFRETSpotFinder implements Command, Interactive {
 
     // Member variables.
     public ImagePlus backgroundMask;
-    public java.util.List<String> columnHeaders = Arrays.asList("x", "y", "snr", "prominence"); // the first two fields should always be "x","y".
+    // The first two fields must always be "x","y". Every entry here is a column the in-memory
+    // spot array carries after its flag, so this list and the widening filters have to move
+    // together: saveSpotLocations writes spots[i][j+1] for each header in order, and
+    // loadSpotLocations reads them back with the flag gone.
+    public java.util.List<String> columnHeaders =
+            Arrays.asList("x", "y", "snr", "prominence", "contamination");
     // Off unless -Dsmfret.diagnostics=true, which turns the intermediate images back on.
     //
     // Read from a property rather than written as a literal, and that is load bearing: as
@@ -1176,7 +1182,7 @@ public class smFRETSpotFinder implements Command, Interactive {
      * their true ratio. On hel1 that rejected 52% of spots at SNR 15-25 against 16% below 10.
      * A ring at or below zero is now simply taken as "nothing there, so no neighbour".
      */
-    double[][] spotFilterProminence(double[][] spots, ImagePlus sumImage, ImagePlus backgroundImage) {
+    double[][] spotMeasureProminence(double[][] spots, ImagePlus sumImage, ImagePlus backgroundImage) {
         double[][] filteredSpots = new double[spots.length][spots[0].length+1];
         int last_col = filteredSpots[0].length-1;
 
@@ -1215,11 +1221,70 @@ public class smFRETSpotFinder implements Command, Interactive {
             }
 
             filteredSpots[i][last_col] = prominence;
-            if (prominence < spotProminence){
-                filteredSpots[i][0] = 0.0;
-            }
         }
 
+        return filteredSpots;
+    }
+
+    /**
+     * Score every surviving spot for contamination and drop the ones over the threshold.
+     *
+     * <p>The neighbour list the model reads is <b>the spots still alive at this point</b>,
+     * not every maximum found, because that is what it was trained on - the training
+     * detections came from the saved spot table, which is written after the edge, proximity
+     * and SNR filters have run.
+     *
+     * <p>Only {@code sum} was simulated, so on {@code donor} or {@code acceptor} the model is
+     * being asked about an image half as bright as anything it saw. The black level is scaled
+     * by the channel count for the same reason {@code spotFilterSNR} does it, which is the
+     * right correction for the background but does not make a single channel a condition the
+     * model has been tested on.
+     */
+    double[][] spotFilterContamination(double[][] spots, ImagePlus sumImage) {
+        double[][] filteredSpots = new double[spots.length][spots[0].length + 1];
+        int last_col = filteredSpots[0].length - 1;
+        for (int i = 0; i < spots.length; i++) {
+            System.arraycopy(spots[i], 0, filteredSpots[i], 0, spots[i].length);
+        }
+        int[] alive = new int[spots.length];
+        int count = 0;
+        for (int i = 0; i < spots.length; i++) {
+            if (spots[i][0] > 0.5) {
+                alive[count++] = i;
+            }
+        }
+        if (count == 0) {
+            return filteredSpots;
+        }
+
+        double[] x = new double[count];
+        double[] y = new double[count];
+        double[] snr = new double[count];
+        double[] prominence = new double[count];
+        for (int i = 0; i < count; i++) {
+            double[] spot = spots[alive[i]];
+            x[i] = spot[1];
+            y[i] = spot[2];
+            snr[i] = spot[3];
+            prominence[i] = spot[4];
+        }
+
+        smFRETSpotQuality.Forest forest = smFRETSpotQuality.shipped();
+        float[] pixels = (float[]) sumImage.getProcessor().getPixels();
+        double[][] features = smFRETSpotQuality.features(pixels, sumImage.getWidth(),
+                sumImage.getHeight(), x, y, snr, prominence, cameraGain,
+                channelCount() * cameraBlackLevel, Math.max(1, cachedFrames), forest);
+
+        // The score is recorded whether or not it is being filtered on. It is a diagnostic
+        // column in the spot table, so switching the filter off with a threshold of 1 has to
+        // leave the number behind rather than a column of zeros.
+        for (int i = 0; i < count; i++) {
+            double contamination = forest.predict(features[i]);
+            filteredSpots[alive[i]][last_col] = contamination;
+            if (contamination > spotContamination) {
+                filteredSpots[alive[i]][0] = 0.0;
+            }
+        }
         return filteredSpots;
     }
 
@@ -1568,9 +1633,14 @@ public class smFRETSpotFinder implements Command, Interactive {
             filteredSpots = spotFilterSNR(filteredSpots, sumImage, backgroundImage);
             log.info("after SNR filter " + countGoodSpots(filteredSpots));
 
-            // filter low prominence spots.
-            filteredSpots = spotFilterProminence(filteredSpots, sumImage, backgroundImage);
-            log.info("after prominence filter " + countGoodSpots(filteredSpots));
+            // Measure prominence. It no longer filters on its own - it is one of the
+            // inputs the contamination model reads - but it still has to be computed
+            // before that model runs, and it is still reported per spot.
+            filteredSpots = spotMeasureProminence(filteredSpots, sumImage, backgroundImage);
+
+            // filter contaminated spots.
+            filteredSpots = spotFilterContamination(filteredSpots, sumImage);
+            log.info("after contamination filter " + countGoodSpots(filteredSpots));
 
             // display as overlay on sum image.
             Overlay ov = getSpotOverlay(filteredSpots, spotMargin(), spotColor);
@@ -1607,7 +1677,7 @@ public class smFRETSpotFinder implements Command, Interactive {
             mapping.put("root name", saveRootName);
             mapping.put("spots file", spotsFileName);
             mapping.put("spot margin", spotMargin());
-            mapping.put("spot prominence", spotProminence);
+            mapping.put("spot contamination", spotContamination);
             mapping.put("spot sigma", spotSigma);
             mapping.put("spot spacing", spotSpacing);
             mapping.put("spot threshold", spotThreshold);
