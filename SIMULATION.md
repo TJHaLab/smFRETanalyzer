@@ -53,16 +53,11 @@ A fixed threshold still selects fewer molecules as spots get larger. That is
 real rather than an artifact: a wider PSF spreads the same photons over more
 background, so the same molecule genuinely is harder to detect.
 
-## SpotTolerance - default 5
+## SpotTolerance - estimated from the image, 3.0 x the noise
 
 The flood fill depth MaximumFinder uses, which behaves as a minimum peak
 amplitude: a spot whose peak sits less than this above the plain connecting it
 to a brighter neighbour is merged into that neighbour and lost.
-
-Swept from 1 to 20 against ground truth at spot sizes 1.0 to 3.0, two
-densities and 20 averaged frames, scored on how many real spots survive every
-filter. **5 recovers 98.3% of the best achievable on average and 96.0% in the
-worst condition; 10 manages 79.1% and 43.6%.**
 
 Both directions do damage, and the low end is worse than it looks. Every
 maximum builds the masks, including the noise ones - they trip the spot
@@ -72,11 +67,79 @@ were found and **3 spots survived**, with the background error at 44.5 ADU.
 Too high and real spots are merged away, and the background degrades again
 because the missed spots go unmasked.
 
-It is not truly size independent - the useful upper limit falls from about 20
-at SpotSigma 1 to about 4 at SpotSigma 3, because peak amplitude goes as
-1/SpotSigma^2 - but 5 is within 4% of the best at every size tested. If you
-average many more or many fewer than 20 frames, or your background is very
-different, the noise floor moves and this is the parameter to revisit.
+### Why it is no longer a number you type
+
+It used to default to 5, swept from 1 to 20 at spot sizes 1.0 to 3.0, two
+densities and **20 averaged frames**. That last condition is the problem. The
+tolerance is in raw image units, so what counts as a deep enough dip depends
+on where the noise floor of the averaged image sits - and that moves with the
+camera, the gain, the background and above all the number of frames averaged,
+which enters as 1/sqrt(N). A number swept on one setup quietly stops being
+right on the next, and nothing about the parameter tells you so.
+
+That was also what made it confusing to set next to SpotThreshold (issue #10).
+The two looked like a pair of brightness cuts, but SpotThreshold is in sigma
+and means the same thing on every microscope, while this one never did.
+
+The noise floor is measurable, so the number is derived from it instead. The
+estimator is the median absolute deviation of horizontal pixel differences,
+scaled by 1.4826 for a Gaussian sigma and by 1/sqrt(2) to undo the
+differencing. Differencing removes the illumination profile, and the MAD
+ignores the differences that step onto a spot - so neither the beam nor the
+sample density moves it.
+
+### Choosing the multiple
+
+Swept 2.0 to 4.0 against the fixed default across spot sizes 1.0 to 3.0, two
+densities and **frame counts 5 to 40**, scored the same way: recall of truth
+spots at true SNR >= 6, with the match radius scaled by spot size.
+
+| tolerance | mean recall | worst | % of the best tried | worst % |
+|---|---|---|---|---|
+| fixed 5 | 0.754 | 0.420 | 89.8 | 55.6 |
+| 2.0 sigma | 0.689 | 0.420 | 82.4 | 57.9 |
+| 2.5 sigma | 0.798 | 0.609 | 95.4 | 88.0 |
+| **3.0 sigma** | **0.825** | **0.613** | **98.6** | **93.7** |
+| 3.5 sigma | 0.821 | 0.475 | 97.7 | 77.6 |
+| 4.0 sigma | 0.811 | 0.425 | 96.3 | 69.4 |
+
+**3.0 recovers 98.6% of the best tried on average and 93.7% in the worst
+condition, against 89.8% and 55.6% for the fixed 5.** It is an interior
+maximum - 2.5 and 3.5 fall off it on every column - rather than the edge of
+the range swept. The percentages are against the best of the six options at
+each condition, not against a dense per-condition sweep, so they are not
+directly comparable with the 98.3% quoted for the old default.
+
+Worth noting that 3.0 is **not** the multiple that reproduces the old default.
+At the 20 frames it was swept at, the noise floor is 1.42 ADU and 5 is 3.5
+sigma. 3.5 sigma scores worse than 3.0 here because the old sweep held the
+frame count fixed and this one does not: 5 was already slightly too deep for
+large spots, whose peak amplitude goes as 1/SpotSigma^2, and the useful upper
+limit falls from about 20 at SpotSigma 1 to about 4 at SpotSigma 3.
+
+The trade is heavily asymmetric, which is the real argument. Against the fixed
+5, the estimate is better in 26 of 40 conditions and worse in 12, but its
+**largest single loss is 0.043 recall while its largest gain is 0.376**. Every
+large gain is at a low frame count, where a fixed 5 sits well under the noise
+floor and the field floods with noise maxima - the failure described above.
+
+### On real data
+
+On `hel1` at 30 frames the measured noise is 1.03 ADU and the estimate is
+3.10, against the old fixed 5. There is no ground truth on a real movie, so
+this is a consistency check rather than a score: the multiple that the old
+default corresponds to on `hel1` (3.4 sigma) is the same one it corresponds to
+in simulation (3.5 sigma), on a different camera, bit depth and background.
+
+One caveat, measured rather than assumed: the acceptor half is warped onto the
+donor's frame before the two are added, and interpolation correlates
+neighbouring pixels, so the estimator reads about **10% less noise** on real
+data than the same field would give unwarped (1.03 against 1.15 on `hel1`).
+That is well inside the flat region - the whole 2.5 to 3.5 range is within 3%
+of the best on average - so it is left uncorrected rather than fixed with a
+constant that would itself need calibrating.
+
+Re-derive with `tools/tolerance_sweep.py`.
 
 ## SpotContamination - default 0.20
 
