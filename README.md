@@ -200,6 +200,10 @@ Two things it does not account for:
 
 The derivation, the aberration table and the check against the pipeline are in [SIMULATION.md](SIMULATION.md).
 
+#### When it warns about SpotContamination
+
+If the measured PSF falls outside the range the contamination model was tested on - core sigma 1.0 to 2.5, aberration 0 to 0.5 waves - a red line under the plots says so and names the channel. This is the only place in the plugin that measures a PSF, so it is the only place that can tell you. Outside that range the score is not merely less accurate: it can rank spots worse than doing nothing, so treat SpotContamination with caution and consider setting it to 1 to switch the filter off.
+
 #### Outputs:
 
 Nothing is written unless you ask for it:

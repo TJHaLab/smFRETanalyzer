@@ -60,6 +60,9 @@ public class smFRETPSFVisualizer implements Command {
     // it and the fit never saw it. Collapsing the two into one colour would lose that.
     // Magenta rather than red: red is the acceptor's colour in the plots below, and the ring
     // has nothing to do with a channel. Nothing on a greyscale image can be mistaken for it.
+    /** For the PSF-outside-the-model warning. Red rather than the caption grey. */
+    private static final Color WARNING_COLOR = new Color(170, 30, 30);
+
     private static final Color RADIUS_COLOR = new Color(210, 30, 160);
 
     private static final Color OUTSIDE_COLOR = new Color(238, 236, 230);
@@ -92,6 +95,7 @@ public class smFRETPSFVisualizer implements Command {
     private JSpinner maskSpinner;
     private JSpinner patchSpinner;
     private JLabel adviceLabel;
+    private JLabel envelopeLabel;
     private JCheckBox pedestalBox;
     private JComboBox<String> scaleCombo;
     private ProfilePanel[] profilePanel = new ProfilePanel[2];
@@ -353,6 +357,47 @@ public class smFRETPSFVisualizer implements Command {
                         + " \u00b7 donor %.2f, acceptor %.2f",
                 joint.best, 100.0 * FILTER_TOLERANCE, joint.low, joint.high,
                 forDonor.best, forAcceptor.best));
+
+        if (envelopeLabel != null) {
+            envelopeLabel.setText(envelopeWarning(donor, acceptor));
+            envelopeLabel.setVisible(!envelopeWarning(donor, acceptor).isEmpty());
+        }
+    }
+
+    /**
+     * Whether the measured PSF is one SpotContamination's model was trained on.
+     *
+     * <p>Worth saying out loud because the failure is quiet and it is not a graceful
+     * degradation: outside the range it was trained across, the contamination score can rank
+     * spots *worse* than the untrained prominence statistic does, so a user with an unusual
+     * PSF is not getting a slightly weaker filter, they are getting one that may be actively
+     * misleading. This plugin is where the PSF is measured, so it is the only place that can
+     * notice.
+     *
+     * <p>Returns an empty string when the PSF is covered, so the label can simply be hidden.
+     */
+    static String envelopeWarning(smFRETPSF.Fit donor, smFRETPSF.Fit acceptor) {
+        smFRETSpotQuality.Forest forest = smFRETSpotQuality.shipped();
+        boolean donorOk = forest.covers(donor.sigma, donor.waves);
+        boolean acceptorOk = forest.covers(acceptor.sigma, acceptor.waves);
+        if (donorOk && acceptorOk) {
+            return "";
+        }
+
+        String which;
+        if (!donorOk && !acceptorOk) {
+            which = "Both channels are";
+        } else if (!donorOk) {
+            which = "The donor channel is";
+        } else {
+            which = "The acceptor channel is";
+        }
+        return String.format(
+                "%s outside the PSF range the SpotContamination model was tested on "
+                        + "(sigma %.1f to %.1f, aberration %.1f to %.1f waves). "
+                        + "Treat that score with caution here.",
+                which, forest.sigmaRange[0], forest.sigmaRange[1],
+                forest.wavesRange[0], forest.wavesRange[1]);
     }
 
     /** Whichever of the two fits the pedestal checkbox is asking for. */
@@ -892,6 +937,14 @@ public class smFRETPSFVisualizer implements Command {
                 + " found, the masks and the prominence, so this is advice about traces"
                 + " alone.</html>");
 
+        // Hidden unless the measured PSF falls outside what the contamination model was
+        // trained on. Coloured, because a caution that reads like the rest of the captions
+        // is a caution nobody sees.
+        envelopeLabel = new JLabel(" ");
+        envelopeLabel.setBorder(new EmptyBorder(2, 8, 0, 8));
+        envelopeLabel.setForeground(WARNING_COLOR);
+        envelopeLabel.setVisible(false);
+
         statusLabel = new JLabel(" ");
         statusLabel.setBorder(new EmptyBorder(2, 8, 4, 8));
 
@@ -904,9 +957,10 @@ public class smFRETPSFVisualizer implements Command {
         buttons.add(saveCsv);
         buttons.add(savePng);
 
-        JPanel captions = new JPanel(new GridLayout(3, 1));
+        JPanel captions = new JPanel(new GridLayout(4, 1));
         captions.add(modelLabel);
         captions.add(adviceLabel);
+        captions.add(envelopeLabel);
         captions.add(statusLabel);
 
         JPanel bottom = new JPanel(new BorderLayout());
