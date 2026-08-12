@@ -93,7 +93,7 @@ class TraceRecoveryTest {
         stage2.spotSigma = sigma;
         stage2.spotThreshold = 6.0;
         stage2.spotTolerance = 5.0;
-        stage2.spotProminence = 0.4;
+        stage2.spotContamination = 1.0;   // no quality filtering in this test
         stage2.cameraBlackLevel = 0;
         stage2.cameraGain = 1.0;
         stage2.spotSpacing = 3;
@@ -221,7 +221,7 @@ class TraceRecoveryTest {
         stage2.spotSigma = 2.0;
         stage2.spotThreshold = 6.0;
         stage2.spotTolerance = 5.0;
-        stage2.spotProminence = 0.4;
+        stage2.spotContamination = 1.0;   // no quality filtering in this test
         stage2.cameraBlackLevel = 0;
         stage2.cameraGain = 1.0;
         stage2.spotSpacing = 3;

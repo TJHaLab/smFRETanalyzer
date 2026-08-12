@@ -43,7 +43,6 @@ class ProminenceCalibrationTest {
         finder.cameraGain = 1.0;
         finder.cameraBlackLevel = 0;
         finder.cachedFrames = 20;
-        finder.spotProminence = 0.4;
         return finder;
     }
 
@@ -89,7 +88,7 @@ class ProminenceCalibrationTest {
     }
 
     private static double prominenceOf(smFRETSpotFinder finder, ImagePlus image) {
-        double[][] filtered = finder.spotFilterProminence(oneSpotAtCentre(), image, zeroBackground());
+        double[][] filtered = finder.spotMeasureProminence(oneSpotAtCentre(), image, zeroBackground());
         return filtered[0][filtered[0].length - 1];
     }
 
@@ -254,19 +253,19 @@ class ProminenceCalibrationTest {
     }
 
     /**
-     * The filter marks a spot bad by clearing column 0, and records the score whether or not it
-     * passed - the score is a diagnostic column in the CSV, so it has to survive rejection.
+     * Prominence no longer decides anything on its own - it is one input to the contamination
+     * model - so what has to hold now is that measuring it leaves the flag alone and still
+     * records the score. A spot that arrives good must leave good however low it scores.
      */
     @Test
-    @DisplayName("the flag is cleared but the score is still recorded")
-    void rejectionKeepsTheScore() {
+    @DisplayName("measuring prominence records the score and rejects nothing")
+    void measuringKeepsTheFlag() {
         smFRETSpotFinder finder = finderAt(2.0);
-        finder.spotProminence = 2.0;      // Above what any real spot can reach.
 
-        double[][] filtered = finder.spotFilterProminence(oneSpotAtCentre(),
+        double[][] measured = finder.spotMeasureProminence(oneSpotAtCentre(),
                 pointSampledSpot(2.0, 100.0), zeroBackground());
 
-        assertEquals(0.0, filtered[0][0], 0.0, "the good flag");
-        assertEquals(1.0, filtered[0][filtered[0].length - 1], 1.0e-5, "the recorded prominence");
+        assertEquals(1.0, measured[0][0], 0.0, "the good flag");
+        assertEquals(1.0, measured[0][measured[0].length - 1], 1.0e-5, "the recorded prominence");
     }
 }
