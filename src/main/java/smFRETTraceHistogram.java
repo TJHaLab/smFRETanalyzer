@@ -61,6 +61,10 @@ public class smFRETTraceHistogram implements Command {
     static final int N_FILTERS = 3;
     static final String[] FILTER_NAMES = {"Total (D+A)", "Donor (target)", "Acceptor (source)"};
 
+    // For the status line, where all three appear at once and the parenthesised halves would
+    // crowd out the counts they are there to label.
+    static final String[] SHORT_FILTER_NAMES = {"total", "donor", "acceptor"};
+
     // FRET efficiency is plotted over a fixed range, slightly wider than [0,1] so that the
     // noise skirts either side of the physical range stay visible.
     static final double FRET_MIN = -0.2;
@@ -358,6 +362,51 @@ public class smFRETTraceHistogram implements Command {
      * slider looks guilty.
      */
     /**
+     * How many traces each range rejected, or null when none of them rejected anything.
+     *
+     * A trace failing two ranges is counted against both, so these do not sum to the number
+     * dropped. That is the useful behaviour: it says whether opening one slider would recover
+     * anything, which a single total could not.
+     */
+    static String describeRejections(Histogram result) {
+        StringBuilder out = new StringBuilder();
+        for (int f : new int[] {FILTER_DONOR, FILTER_ACCEPTOR, FILTER_TOTAL}) {
+            if (result.nRejectedBy[f] <= 0) {
+                continue;
+            }
+            if (out.length() > 0) {
+                out.append(", ");
+            }
+            out.append(SHORT_FILTER_NAMES[f]).append(' ').append(String.format("%,d", result.nRejectedBy[f]));
+        }
+        return (out.length() == 0) ? null : out.toString();
+    }
+
+    static String emptyExplanation(Histogram result, int nSpots) {
+        if ((nSpots <= 0) || (result.nSpotsUsed > 0)) {
+            return null;
+        }
+
+        java.util.List<String> culprits = new java.util.ArrayList<>();
+        for (int f : new int[] {FILTER_DONOR, FILTER_ACCEPTOR, FILTER_TOTAL}) {
+            if (result.nRejectedBy[f] >= nSpots) {
+                culprits.add(FILTER_NAMES[f]);
+            }
+        }
+
+        if (culprits.isEmpty()) {
+            return "No traces pass all three ranges. No single one excludes everything, so it is"
+                    + " their overlap that is empty - widen whichever matters least.";
+        }
+        if (culprits.size() == 1) {
+            return "No traces pass all three ranges. " + culprits.get(0)
+                    + " rejects every trace on its own - widen it.";
+        }
+        return "No traces pass all three ranges. " + String.join(" and ", culprits)
+                + " each reject every trace on their own - widening one will not be enough.";
+    }
+
+    /**
      * The intensity the range slider is currently applied to.
      */
     static double filterValue(int filterType, double donor, double acceptor, double total) {
@@ -385,6 +434,39 @@ public class smFRETTraceHistogram implements Command {
             setBackground(Color.WHITE);
         }
 
+        /**
+         * The empty-set explanation, centred and wrapped to the plot area.
+         *
+         * Wrapped by hand because the sentence names filters whose labels vary in length and the
+         * window is resizable, so there is no width at which one line is safe.
+         */
+        private void drawEmptyMessage(Graphics2D g2, String message, int plotWidth, int plotHeight) {
+            g2.setColor(new Color(150, 60, 40));
+            FontMetrics metrics = g2.getFontMetrics();
+
+            java.util.List<String> lines = new java.util.ArrayList<>();
+            StringBuilder line = new StringBuilder();
+            for (String word : message.split(" ")) {
+                String candidate = (line.length() == 0) ? word : line + " " + word;
+                if ((metrics.stringWidth(candidate) > plotWidth) && (line.length() > 0)) {
+                    lines.add(line.toString());
+                    line = new StringBuilder(word);
+                } else {
+                    line = new StringBuilder(candidate);
+                }
+            }
+            if (line.length() > 0) {
+                lines.add(line.toString());
+            }
+
+            int lineHeight = metrics.getHeight();
+            int y = MARGIN_TOP + (plotHeight - lines.size() * lineHeight) / 2 + metrics.getAscent();
+            for (String text : lines) {
+                g2.drawString(text, MARGIN_LEFT + (plotWidth - metrics.stringWidth(text)) / 2, y);
+                y += lineHeight;
+            }
+        }
+
         @Override
         protected void paintComponent(Graphics g) {
             super.paintComponent(g);
@@ -399,6 +481,16 @@ public class smFRETTraceHistogram implements Command {
             int plotWidth = getWidth() - MARGIN_LEFT - MARGIN_RIGHT;
             int plotHeight = getHeight() - MARGIN_TOP - MARGIN_BOTTOM;
             if ((plotWidth < 10) || (plotHeight < 10)) {
+                g2.dispose();
+                return;
+            }
+
+            // An empty plot is where the user looks first, so the reason goes here rather than
+            // only in the status line under it. Drawn instead of the axes: empty axes invite the
+            // reading that the data is wrong, when what is wrong is a slider.
+            String empty = emptyExplanation(result, nSpots);
+            if (empty != null) {
+                drawEmptyMessage(g2, empty, plotWidth, plotHeight);
                 g2.dispose();
                 return;
             }
@@ -1133,12 +1225,25 @@ public class smFRETTraceHistogram implements Command {
             status += String.format(" · %,d outside range", result.nOutside);
         }
 
+        // What each range is costing, before it costs everything. Only the ones actually
+        // rejecting something are listed - three zeroes on an unfiltered histogram would be
+        // noise, and the point is to make a slider that is biting stand out.
+        String rejected = describeRejections(result);
+        if (rejected != null) {
+            status += " · rejected: " + rejected;
+        }
+
         // Only when they are doing something, so that the common uncorrected case reads as it
         // did before rather than carrying three zeroes around.
         if (!corrections.isIdentity()) {
             status += " · " + corrections.describe();
         }
         statusLabel.setText(status);
+
+        // A full width row is enough for the usual line, but a narrow window and three biting
+        // ranges will still outrun it, and a JLabel truncates to an ellipsis without saying what
+        // it dropped. The tooltip is the same text, so nothing is unreachable.
+        statusLabel.setToolTipText(status);
 
         plotPanel.repaint();
     }
@@ -1245,13 +1350,17 @@ public class smFRETTraceHistogram implements Command {
         JButton savePngButton = new JButton("Save PNG...");
         savePngButton.addActionListener(e -> onSavePng(frame));
 
-        JPanel bottomPanel = new JPanel(new BorderLayout(8, 0));
+        // The status line gets the full width of the window, with the buttons on their own row
+        // underneath. It used to share a row with them, so the buttons ate the right hand end of
+        // it - which was survivable when it read "412 of 500 traces" and is not now that it
+        // carries a per range rejection breakdown as well.
+        JPanel bottomPanel = new JPanel(new BorderLayout(0, 4));
         bottomPanel.setBorder(new EmptyBorder(2, 10, 8, 10));
-        bottomPanel.add(statusLabel, BorderLayout.CENTER);
+        bottomPanel.add(statusLabel, BorderLayout.NORTH);
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         buttonPanel.add(saveCsvButton);
         buttonPanel.add(savePngButton);
-        bottomPanel.add(buttonPanel, BorderLayout.EAST);
+        bottomPanel.add(buttonPanel, BorderLayout.SOUTH);
 
         JPanel southPanel = new JPanel(new BorderLayout());
         southPanel.add(controlPanel, BorderLayout.CENTER);

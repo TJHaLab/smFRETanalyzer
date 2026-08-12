@@ -1,5 +1,6 @@
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.DisplayName;
@@ -262,6 +263,79 @@ class HistogramTest {
     private static int kept(smFRETTraceHistogram histogram, smFRETTraceHistogram.Filters filters) {
         return histogram.computeHistogram(smFRETTraceHistogram.TYPE_TOTAL, 1, 2,
                 filters, 8, none()).nSpotsUsed;
+    }
+
+    /**
+     * Naming the range that emptied the histogram, which is what issue #8 left open.
+     *
+     * Three live ranges can be set to an empty intersection. Preventing that would mean
+     * recomputing every slider's limits from the traces on every drag; saying which one did it
+     * costs nothing and answers the question the user actually has.
+     */
+    @Test
+    @DisplayName("an empty result names the range responsible")
+    void anEmptyResultIsExplained() {
+        // Two traces, donor 500 / acceptor 10 and donor 20 / acceptor 400.
+        float[][] donor = {{500.0f, 500.0f}, {20.0f, 20.0f}};
+        float[][] acceptor = {{10.0f, 10.0f}, {400.0f, 400.0f}};
+        smFRETTraceHistogram histogram = withTraces(donor, acceptor);
+
+        double[] min = {-1.0e9, -1.0e9, -1.0e9};
+        double[] max = {1.0e9, 1.0e9, 1.0e9};
+
+        // Nothing is rejected, so there is nothing to explain.
+        assertNull(smFRETTraceHistogram.emptyExplanation(
+                run(histogram, min, max), histogram.nSpots));
+
+        // One range that excludes both traces on its own.
+        max[smFRETTraceHistogram.FILTER_TOTAL] = 1.0;
+        String one = smFRETTraceHistogram.emptyExplanation(
+                run(histogram, min, max), histogram.nSpots);
+        assertTrue(one.contains("Total (D+A)"), one);
+        assertTrue(one.contains("on its own"), one);
+
+        // Two of them, where widening either alone would still leave nothing.
+        max[smFRETTraceHistogram.FILTER_DONOR] = 1.0;
+        String two = smFRETTraceHistogram.emptyExplanation(
+                run(histogram, min, max), histogram.nSpots);
+        assertTrue(two.contains("Donor (target)") && two.contains("Total (D+A)"), two);
+        assertTrue(two.contains("will not be enough"), two);
+
+        // Neither range excludes everything by itself, but together they leave nothing: the
+        // donor cut keeps only the dim trace and the acceptor cut keeps only the bright one.
+        double[] lo = {-1.0e9, -1.0e9, -1.0e9};
+        double[] hi = {1.0e9, 100.0, 100.0};
+        smFRETTraceHistogram.Histogram result = run(histogram, lo, hi);
+        assertEquals(0, result.nSpotsUsed, "the intersection should be empty");
+        assertEquals(1, result.nRejectedBy[smFRETTraceHistogram.FILTER_DONOR], "one each");
+        assertEquals(1, result.nRejectedBy[smFRETTraceHistogram.FILTER_ACCEPTOR], "one each");
+        String neither = smFRETTraceHistogram.emptyExplanation(result, histogram.nSpots);
+        assertTrue(neither.contains("No single one"), neither);
+    }
+
+    /** The per-range rejection counts, as the status line prints them. */
+    @Test
+    @DisplayName("the status breakdown lists only the ranges that rejected something")
+    void theBreakdownSkipsIdleRanges() {
+        float[][] donor = {{500.0f, 500.0f}};
+        float[][] acceptor = {{10.0f, 10.0f}};
+        smFRETTraceHistogram histogram = withTraces(donor, acceptor);
+
+        double[] min = {-1.0e9, -1.0e9, -1.0e9};
+        double[] max = {1.0e9, 1.0e9, 1.0e9};
+        assertNull(smFRETTraceHistogram.describeRejections(run(histogram, min, max)),
+                "an unfiltered histogram should carry no breakdown at all");
+
+        max[smFRETTraceHistogram.FILTER_DONOR] = 1.0;
+        String text = smFRETTraceHistogram.describeRejections(run(histogram, min, max));
+        assertEquals("donor 1", text,
+                "the two open ranges must not appear");
+    }
+
+    private static smFRETTraceHistogram.Histogram run(smFRETTraceHistogram histogram,
+                                                      double[] min, double[] max) {
+        return histogram.computeHistogram(smFRETTraceHistogram.TYPE_TOTAL, 1, 2,
+                new smFRETTraceHistogram.Filters(min, max), 8, none());
     }
 
     /**
