@@ -51,12 +51,19 @@ public class smFRETTraceHistogram implements Command {
     static final int TYPE_TOTAL = 3;
     private static final String[] TYPE_NAMES = {"FRET efficiency", "Donor (target)", "Acceptor (source)", "Total (D+A)"};
 
-    // Quantity the intensity range is applied to. These are mutually exclusive, so they are a
-    // combo box beside a single slider rather than one slider each.
+    // The three quantities an intensity range can be set on. One slider each, all three live at
+    // once and ANDed (issue #8) - they used to be a combo box beside a single slider, which made
+    // them mutually exclusive for no reason other than the widget. Filtering on donor brightness
+    // and on total brightness are not alternatives, and wanting both is the ordinary case.
     static final int FILTER_TOTAL = 0;
     static final int FILTER_DONOR = 1;
     static final int FILTER_ACCEPTOR = 2;
-    private static final String[] FILTER_NAMES = {"Total (D+A)", "Donor (target)", "Acceptor (source)"};
+    static final int N_FILTERS = 3;
+    static final String[] FILTER_NAMES = {"Total (D+A)", "Donor (target)", "Acceptor (source)"};
+
+    // For the status line, where all three appear at once and the parenthesised halves would
+    // crowd out the counts they are there to label.
+    static final String[] SHORT_FILTER_NAMES = {"total", "donor", "acceptor"};
 
     // FRET efficiency is plotted over a fixed range, slightly wider than [0,1] so that the
     // noise skirts either side of the physical range stay visible.
@@ -70,13 +77,12 @@ public class smFRETTraceHistogram implements Command {
     private JSpinner acceptorBaselineSpinner;
     private JSlider binsSlider;
     private JSpinner donorBaselineSpinner;
-    private JComboBox<String> filterCombo;
-    final double[] filterMax = new double[FILTER_NAMES.length];
-    final double[] filterMin = new double[FILTER_NAMES.length];
+    final double[] filterMax = new double[N_FILTERS];
+    final double[] filterMin = new double[N_FILTERS];
     private RangeSlider frameRangeSlider;
     private final boolean isHeadless = GraphicsEnvironment.isHeadless();
     private JSpinner leakageSpinner;
-    private RangeSlider valueRangeSlider;
+    private final RangeSlider[] valueRangeSliders = new RangeSlider[N_FILTERS];
     int nFrames = 0;
     int nSpots = 0;
     private HistogramPanel plotPanel;
@@ -97,7 +103,12 @@ public class smFRETTraceHistogram implements Command {
         int maxCount;
         int nOutside;       // Traces dropped for falling outside [lo,hi].
         int nPoints;        // Traces actually binned.
-        int nSpotsUsed;     // Traces inside the intensity range.
+        int nSpotsUsed;     // Traces inside every intensity range.
+
+        // Per filter, how many traces that filter would have rejected. A trace failing two of
+        // them counts in both, so these do not sum to the number rejected - that is the point,
+        // since it is what says whether widening one slider alone would bring anything back.
+        int[] nRejectedBy = new int[N_FILTERS];
         String valueLabel;
     }
 
@@ -147,11 +158,54 @@ public class smFRETTraceHistogram implements Command {
     }
 
     /**
+     * The three intensity ranges, one per quantity. A trace has to satisfy all of them.
+     *
+     * Grouped for the same reason Corrections is: this replaced a filter index and one pair of
+     * limits, and passing three pairs positionally would take computeHistogram() to twelve
+     * arguments, six of them adjacent unlabelled doubles.
+     *
+     * Indexed by the FILTER_* constants rather than named per channel, so that the per filter
+     * accounting is an array walk and filterValue() can be reused as it stands.
+     */
+    static final class Filters {
+
+        final double[] min;
+        final double[] max;
+
+        Filters(double[] min, double[] max) {
+            this.min = min.clone();
+            this.max = max.clone();
+        }
+
+        /** Everything open, which is what the sliders read before anyone touches them. */
+        static Filters none() {
+            double[] min = new double[N_FILTERS];
+            double[] max = new double[N_FILTERS];
+            java.util.Arrays.fill(min, -Double.MAX_VALUE);
+            java.util.Arrays.fill(max, Double.MAX_VALUE);
+            return new Filters(min, max);
+        }
+
+        /** One filter open and the rest closed down to it - the shape the old single one had. */
+        static Filters only(int filterType, double low, double high) {
+            Filters filters = none();
+            filters.min[filterType] = low;
+            filters.max[filterType] = high;
+            return filters;
+        }
+
+        /** Whether this quantity's range excludes the value, for one frame. */
+        boolean excludes(int filterType, double value) {
+            return (value < min[filterType]) || (value > max[filterType]);
+        }
+    }
+
+    /**
      * Bin the loaded traces. Takes its settings as arguments rather than reading the controls
      * directly so that the binning can be exercised without a GUI.
      */
     Histogram computeHistogram(int type, int firstFrame, int lastFrame,
-                               int filterType, double minValue, double maxValue, int nBins,
+                               Filters filters, int nBins,
                                Corrections corrections) {
 
         // One point per trace, the average over the selected interval. For FRET the donor and
@@ -161,34 +215,49 @@ public class smFRETTraceHistogram implements Command {
         int nValues = 0;
         int nSpotsUsed = 0;
         int nIntervalFrames = lastFrame - firstFrame + 1;
+        int[] nRejectedBy = new int[N_FILTERS];
 
         for (int i = 0; i < nSpots; i++) {
             double donorSum = 0.0;
             double acceptorSum = 0.0;
-            double lowestFrameValue = Double.MAX_VALUE;
-            double highestFrameValue = -Double.MAX_VALUE;
+
+            // Which of the three ranges this trace fell out of, if any. Recorded per filter
+            // rather than as one boolean because a trace that only just fails is the thing the
+            // user needs to find, and with three sliders live the question is always which one.
+            boolean[] rejectedBy = new boolean[N_FILTERS];
+
             for (int t = firstFrame - 1; t < lastFrame; t++) {
                 double frameDonor = corrections.correctDonor(targetTraces[i][t]);
                 double frameAcceptor = corrections.correctAcceptor(sourceTraces[i][t], frameDonor);
                 donorSum += frameDonor;
                 acceptorSum += frameAcceptor;
 
-                double frameValue = filterValue(filterType, frameDonor, frameAcceptor,
-                        frameDonor + frameAcceptor);
-                if (frameValue < lowestFrameValue) {
-                    lowestFrameValue = frameValue;
-                }
-                if (frameValue > highestFrameValue) {
-                    highestFrameValue = frameValue;
+                // The whole trace goes if any single frame in the interval falls outside any of
+                // the ranges, so a molecule that bleaches part way through contributes nothing
+                // rather than a diluted average. The maximum works the same way by design, which
+                // makes it strict: one bright frame is enough to drop a trace. That is what
+                // catches an aggregate, and it also means a single spike will do it.
+                //
+                // Not short circuited on the first failure - every filter that would have
+                // rejected this trace is recorded, so the accounting can say that widening one
+                // slider alone would not bring it back.
+                for (int f = 0; f < N_FILTERS; f++) {
+                    double frameValue = filterValue(f, frameDonor, frameAcceptor,
+                            frameDonor + frameAcceptor);
+                    if (filters.excludes(f, frameValue)) {
+                        rejectedBy[f] = true;
+                    }
                 }
             }
 
-            // The whole trace goes if any single frame in the interval falls outside the range,
-            // so a molecule that bleaches part way through contributes nothing rather than a
-            // diluted average. The maximum works the same way by design, which makes it strict:
-            // one bright frame is enough to drop a trace. That is what catches an aggregate, and
-            // it also means a single spike will do it.
-            if ((lowestFrameValue < minValue) || (highestFrameValue > maxValue)) {
+            boolean rejected = false;
+            for (int f = 0; f < N_FILTERS; f++) {
+                if (rejectedBy[f]) {
+                    nRejectedBy[f] += 1;
+                    rejected = true;
+                }
+            }
+            if (rejected) {
                 continue;
             }
 
@@ -218,6 +287,7 @@ public class smFRETTraceHistogram implements Command {
         Histogram hist = new Histogram();
         hist.counts = new int[nBins];
         hist.nSpotsUsed = nSpotsUsed;
+        hist.nRejectedBy = nRejectedBy;
         hist.valueLabel = TYPE_NAMES[type];
 
         // Fixed range for FRET efficiency, auto range for the intensity histograms.
@@ -276,6 +346,67 @@ public class smFRETTraceHistogram implements Command {
     }
 
     /**
+     * Why nothing survived the three ranges, or null when something did.
+     *
+     * Three live filters can be set to an empty intersection, and the issue that asked for them
+     * left what to do about it open. Preventing it is the wrong answer: whether an intersection
+     * is empty depends on the traces rather than on the numbers, so the limits would have to be
+     * recomputed on every drag and the sliders would fight the user's hand. Explaining it costs
+     * nothing and answers the question they actually have, which is which of three sliders to
+     * move.
+     *
+     * A filter that rejected every trace is one that would still reject every trace with the
+     * other two wide open, so widening it is necessary. When several did, all of them are named
+     * - moving one would not be enough. When none did, the ranges are individually survivable
+     * and only their intersection is empty, which is worth saying outright because no single
+     * slider looks guilty.
+     */
+    /**
+     * How many traces each range rejected, or null when none of them rejected anything.
+     *
+     * A trace failing two ranges is counted against both, so these do not sum to the number
+     * dropped. That is the useful behaviour: it says whether opening one slider would recover
+     * anything, which a single total could not.
+     */
+    static String describeRejections(Histogram result) {
+        StringBuilder out = new StringBuilder();
+        for (int f : new int[] {FILTER_DONOR, FILTER_ACCEPTOR, FILTER_TOTAL}) {
+            if (result.nRejectedBy[f] <= 0) {
+                continue;
+            }
+            if (out.length() > 0) {
+                out.append(", ");
+            }
+            out.append(SHORT_FILTER_NAMES[f]).append(' ').append(String.format("%,d", result.nRejectedBy[f]));
+        }
+        return (out.length() == 0) ? null : out.toString();
+    }
+
+    static String emptyExplanation(Histogram result, int nSpots) {
+        if ((nSpots <= 0) || (result.nSpotsUsed > 0)) {
+            return null;
+        }
+
+        java.util.List<String> culprits = new java.util.ArrayList<>();
+        for (int f : new int[] {FILTER_DONOR, FILTER_ACCEPTOR, FILTER_TOTAL}) {
+            if (result.nRejectedBy[f] >= nSpots) {
+                culprits.add(FILTER_NAMES[f]);
+            }
+        }
+
+        if (culprits.isEmpty()) {
+            return "No traces pass all three ranges. No single one excludes everything, so it is"
+                    + " their overlap that is empty - widen whichever matters least.";
+        }
+        if (culprits.size() == 1) {
+            return "No traces pass all three ranges. " + culprits.get(0)
+                    + " rejects every trace on its own - widen it.";
+        }
+        return "No traces pass all three ranges. " + String.join(" and ", culprits)
+                + " each reject every trace on their own - widening one will not be enough.";
+    }
+
+    /**
      * The intensity the range slider is currently applied to.
      */
     static double filterValue(int filterType, double donor, double acceptor, double total) {
@@ -303,6 +434,39 @@ public class smFRETTraceHistogram implements Command {
             setBackground(Color.WHITE);
         }
 
+        /**
+         * The empty-set explanation, centred and wrapped to the plot area.
+         *
+         * Wrapped by hand because the sentence names filters whose labels vary in length and the
+         * window is resizable, so there is no width at which one line is safe.
+         */
+        private void drawEmptyMessage(Graphics2D g2, String message, int plotWidth, int plotHeight) {
+            g2.setColor(new Color(150, 60, 40));
+            FontMetrics metrics = g2.getFontMetrics();
+
+            java.util.List<String> lines = new java.util.ArrayList<>();
+            StringBuilder line = new StringBuilder();
+            for (String word : message.split(" ")) {
+                String candidate = (line.length() == 0) ? word : line + " " + word;
+                if ((metrics.stringWidth(candidate) > plotWidth) && (line.length() > 0)) {
+                    lines.add(line.toString());
+                    line = new StringBuilder(word);
+                } else {
+                    line = new StringBuilder(candidate);
+                }
+            }
+            if (line.length() > 0) {
+                lines.add(line.toString());
+            }
+
+            int lineHeight = metrics.getHeight();
+            int y = MARGIN_TOP + (plotHeight - lines.size() * lineHeight) / 2 + metrics.getAscent();
+            for (String text : lines) {
+                g2.drawString(text, MARGIN_LEFT + (plotWidth - metrics.stringWidth(text)) / 2, y);
+                y += lineHeight;
+            }
+        }
+
         @Override
         protected void paintComponent(Graphics g) {
             super.paintComponent(g);
@@ -317,6 +481,16 @@ public class smFRETTraceHistogram implements Command {
             int plotWidth = getWidth() - MARGIN_LEFT - MARGIN_RIGHT;
             int plotHeight = getHeight() - MARGIN_TOP - MARGIN_BOTTOM;
             if ((plotWidth < 10) || (plotHeight < 10)) {
+                g2.dispose();
+                return;
+            }
+
+            // An empty plot is where the user looks first, so the reason goes here rather than
+            // only in the status line under it. Drawn instead of the axes: empty axes invite the
+            // reading that the data is wrong, when what is wrong is a slider.
+            String empty = emptyExplanation(result, nSpots);
+            if (empty != null) {
+                drawEmptyMessage(g2, empty, plotWidth, plotHeight);
                 g2.dispose();
                 return;
             }
@@ -879,10 +1053,18 @@ public class smFRETTraceHistogram implements Command {
         }
         try (PrintWriter writer = new PrintWriter(chooser.getSelectedFile())) {
             writer.println("# " + result.valueLabel + " from " + h5File);
+            // All three ranges, including the ones left wide open. A saved histogram has to say
+            // what was filtered, and an omitted line reads as "no filter" rather than "this one
+            // was untouched" only if you already know how many there are.
+            StringBuilder ranges = new StringBuilder();
+            for (int f : new int[] {FILTER_DONOR, FILTER_ACCEPTOR, FILTER_TOTAL}) {
+                ranges.append(", ").append(FILTER_NAMES[f]).append(' ')
+                        .append(valueRangeSliders[f].getLow()).append('-')
+                        .append(valueRangeSliders[f].getHigh());
+            }
             writer.println("# frames " + frameRangeSlider.getLow() + "-" + frameRangeSlider.getHigh()
-                    + ", " + FILTER_NAMES[filterCombo.getSelectedIndex()] + " "
-                    + valueRangeSlider.getLow() + "-" + valueRangeSlider.getHigh()
-                    + ", " + result.nPoints + " of " + result.nSpotsUsed + " traces in range");
+                    + ranges + ", " + result.nPoints + " of " + result.nSpotsUsed
+                    + " traces in range");
 
             // Written even when they are all zero, so that a saved histogram says what was done
             // to the traces rather than leaving it to be inferred from the absence of a line.
@@ -973,15 +1155,26 @@ public class smFRETTraceHistogram implements Command {
         boolean wasSuspended = suspendUpdates;
         suspendUpdates = true;
         try {
-            int filterType = filterCombo.getSelectedIndex();
-            int lo = (int) Math.floor(filterMin[filterType]);
-            int hi = (int) Math.ceil(filterMax[filterType]);
-
-            valueRangeSlider.setRange(lo, hi);
-            valueRangeSlider.setValues(lo, hi);
+            for (int f = 0; f < N_FILTERS; f++) {
+                int lo = (int) Math.floor(filterMin[f]);
+                int hi = (int) Math.ceil(filterMax[f]);
+                valueRangeSliders[f].setRange(lo, hi);
+                valueRangeSliders[f].setValues(lo, hi);
+            }
         } finally {
             suspendUpdates = wasSuspended;
         }
+    }
+
+    /** The three ranges as the sliders currently read them. */
+    private Filters filters() {
+        double[] min = new double[N_FILTERS];
+        double[] max = new double[N_FILTERS];
+        for (int f = 0; f < N_FILTERS; f++) {
+            min[f] = valueRangeSliders[f].getLow();
+            max[f] = valueRangeSliders[f].getHigh();
+        }
+        return new Filters(min, max);
     }
 
     /**
@@ -1020,9 +1213,7 @@ public class smFRETTraceHistogram implements Command {
         result = computeHistogram(selectedType(),
                 frameRangeSlider.getLow(),
                 frameRangeSlider.getHigh(),
-                filterCombo.getSelectedIndex(),
-                valueRangeSlider.getLow(),
-                valueRangeSlider.getHigh(),
+                filters(),
                 binsSlider.getValue(),
                 corrections);
 
@@ -1034,12 +1225,25 @@ public class smFRETTraceHistogram implements Command {
             status += String.format(" · %,d outside range", result.nOutside);
         }
 
+        // What each range is costing, before it costs everything. Only the ones actually
+        // rejecting something are listed - three zeroes on an unfiltered histogram would be
+        // noise, and the point is to make a slider that is biting stand out.
+        String rejected = describeRejections(result);
+        if (rejected != null) {
+            status += " · rejected: " + rejected;
+        }
+
         // Only when they are doing something, so that the common uncorrected case reads as it
         // did before rather than carrying three zeroes around.
         if (!corrections.isIdentity()) {
             status += " · " + corrections.describe();
         }
         statusLabel.setText(status);
+
+        // A full width row is enough for the usual line, but a narrow window and three biting
+        // ranges will still outrun it, and a JLabel truncates to an ellipsis without saying what
+        // it dropped. The tooltip is the same text, so nothing is unreachable.
+        statusLabel.setToolTipText(status);
 
         plotPanel.repaint();
     }
@@ -1086,21 +1290,14 @@ public class smFRETTraceHistogram implements Command {
         // default bin count is correspondingly lower.
         binsSlider = new JSlider(10, 200, 30);
         frameRangeSlider = new RangeSlider(1, Math.max(1, nFrames));
-        valueRangeSlider = new RangeSlider(0, 1);
 
-        // The range applies to one intensity at a time, chosen here. Switching rescales the
-        // slider to the new quantity and reopens it to the full range, since the ranges of the
-        // three quantities are unrelated.
-        filterCombo = new JComboBox<>(FILTER_NAMES);
-        filterCombo.setSelectedIndex(FILTER_TOTAL);
-        filterCombo.addActionListener(e -> {
-            resetFilterSliderRange();
-            update();
-        });
-
-        JPanel filterLabelPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-        filterLabelPanel.add(new JLabel("Range"));
-        filterLabelPanel.add(filterCombo);
+        // One slider per quantity, all three live at once. Their limits are unrelated to each
+        // other - a total runs to roughly the sum of the two channels - so each is scaled to its
+        // own range and opened to it, which is what makes "parked at the extreme excludes
+        // nothing" true of all three independently.
+        for (int f = 0; f < N_FILTERS; f++) {
+            valueRangeSliders[f] = new RangeSlider(0, 1);
+        }
 
         // Corrections. Spin boxes rather than sliders because these are set to a measured number -
         // a baseline read off a blank region, a leakage measured on a donor only sample - rather
@@ -1128,14 +1325,21 @@ public class smFRETTraceHistogram implements Command {
         addSliderRow(controlPanel, 0, new JLabel("Bins"), binsSlider, () -> Integer.toString(binsSlider.getValue()));
         addSliderRow(controlPanel, 1, new JLabel("Frames"), frameRangeSlider,
                 () -> frameRangeSlider.getLow() + "-" + frameRangeSlider.getHigh());
-        addSliderRow(controlPanel, 2, filterLabelPanel, valueRangeSlider,
-                () -> valueRangeSlider.getLow() + "-" + valueRangeSlider.getHigh());
+        // Donor, acceptor and total in that order rather than the FILTER_* order, which puts
+        // total first. The two channels are what the plot is of, and the total is derived from
+        // them, so reading them in that order matches the rest of the window.
+        int row = 2;
+        for (int f : new int[] {FILTER_DONOR, FILTER_ACCEPTOR, FILTER_TOTAL}) {
+            final RangeSlider slider = valueRangeSliders[f];
+            addSliderRow(controlPanel, row++, new JLabel(FILTER_NAMES[f]), slider,
+                    () -> slider.getLow() + "-" + slider.getHigh());
+        }
 
         GridBagConstraints correctionConstraints = new GridBagConstraints();
         correctionConstraints.anchor = GridBagConstraints.WEST;
         correctionConstraints.gridwidth = 3;
         correctionConstraints.gridx = 0;
-        correctionConstraints.gridy = 3;
+        correctionConstraints.gridy = row;
         correctionConstraints.insets = new Insets(1, 0, 1, 6);
         controlPanel.add(correctionPanel, correctionConstraints);
 
@@ -1146,13 +1350,17 @@ public class smFRETTraceHistogram implements Command {
         JButton savePngButton = new JButton("Save PNG...");
         savePngButton.addActionListener(e -> onSavePng(frame));
 
-        JPanel bottomPanel = new JPanel(new BorderLayout(8, 0));
+        // The status line gets the full width of the window, with the buttons on their own row
+        // underneath. It used to share a row with them, so the buttons ate the right hand end of
+        // it - which was survivable when it read "412 of 500 traces" and is not now that it
+        // carries a per range rejection breakdown as well.
+        JPanel bottomPanel = new JPanel(new BorderLayout(0, 4));
         bottomPanel.setBorder(new EmptyBorder(2, 10, 8, 10));
-        bottomPanel.add(statusLabel, BorderLayout.CENTER);
+        bottomPanel.add(statusLabel, BorderLayout.NORTH);
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         buttonPanel.add(saveCsvButton);
         buttonPanel.add(savePngButton);
-        bottomPanel.add(buttonPanel, BorderLayout.EAST);
+        bottomPanel.add(buttonPanel, BorderLayout.SOUTH);
 
         JPanel southPanel = new JPanel(new BorderLayout());
         southPanel.add(controlPanel, BorderLayout.CENTER);
