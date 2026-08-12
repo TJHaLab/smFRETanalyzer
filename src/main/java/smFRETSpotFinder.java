@@ -58,9 +58,12 @@ import java.util.Map;
         menu = {@Menu(label = "Plugins"),
                 @Menu(label = "smFRET"),
                 @Menu(label = "smFRET Spot Finder", weight = 2.0)})
-public class smFRETSpotFinder implements Command, Interactive {
+public class smFRETSpotFinder implements Command, Interactive, org.scijava.Initializable {
     @Parameter
     LogService log;
+
+    @Parameter (required = false)
+    org.scijava.prefs.PrefService prefs;
 
     @Parameter
     UIService ui;
@@ -1705,6 +1708,11 @@ public class smFRETSpotFinder implements Command, Interactive {
             // Table w/ spot locations.
             saveSpotLocations(spotsFileName, filteredSpots);
 
+            // The user has committed to these settings by running them, which is the only
+            // moment worth remembering. SciJava will not do it: pressing the button is a
+            // callback, not a module completing.
+            saveSettings();
+
             // QC image w/ identified spots.
             FileSaver qcImageSaver = new FileSaver(sumImage);
             qcImageSaver.saveAsTiff(saveRootName + "_spotf_qc_image.tif");
@@ -1724,6 +1732,112 @@ public class smFRETSpotFinder implements Command, Interactive {
         } catch (Exception e) {
             log.info(e);
             IJ.handleException(e);
+        }
+    }
+
+    /**
+     * The settings worth carrying from one session to the next, as strings.
+     *
+     * <p>**Not the file paths, and not by oversight.** Restoring `inputImageName` and
+     * `mappingFile` would point a fresh session at whatever movie was open last time, which
+     * is worse than an empty field: the plugin would look ready to run and would silently
+     * analyse the wrong data if the button were pressed. The slice range *is* here, because a
+     * user working through a folder of movies wants the same range on each and re-typing it
+     * every time is the complaint this exists to fix.
+     */
+    java.util.Map<String, String> currentSettings() {
+        java.util.Map<String, String> out = new java.util.LinkedHashMap<>();
+        out.put("startSlice", String.valueOf(startSlice));
+        out.put("endSlice", String.valueOf(endSlice));
+        out.put("spotThreshold", String.valueOf(spotThreshold));
+        out.put("spotTolerance", String.valueOf(spotTolerance));
+        out.put("spotContamination", String.valueOf(spotContamination));
+        out.put("spotSigma", String.valueOf(spotSigma));
+        out.put("cameraBlackLevel", String.valueOf(cameraBlackLevel));
+        out.put("cameraGain", String.valueOf(cameraGain));
+        out.put("spotSpacing", String.valueOf(spotSpacing));
+        out.put("edgeMargin", String.valueOf(edgeMargin));
+        out.put("backgroundKappa", String.valueOf(backgroundKappa));
+        out.put("spotChannel", spotChannel);
+        return out;
+    }
+
+    /**
+     * Apply saved settings, ignoring anything unparseable or unknown.
+     *
+     * <p>Lenient on purpose: the stored preferences outlive the code that wrote them, and
+     * this file already carries keys for parameters that no longer exist. A stale or
+     * malformed entry has to leave its parameter at the default rather than stop the plugin
+     * opening.
+     */
+    void applySettings(java.util.Map<String, String> saved) {
+        if (saved == null) {
+            return;
+        }
+        startSlice = asInt(saved.get("startSlice"), startSlice);
+        endSlice = asInt(saved.get("endSlice"), endSlice);
+        spotThreshold = asDouble(saved.get("spotThreshold"), spotThreshold);
+        spotTolerance = asDouble(saved.get("spotTolerance"), spotTolerance);
+        spotContamination = asDouble(saved.get("spotContamination"), spotContamination);
+        spotSigma = asDouble(saved.get("spotSigma"), spotSigma);
+        cameraBlackLevel = asInt(saved.get("cameraBlackLevel"), cameraBlackLevel);
+        cameraGain = asDouble(saved.get("cameraGain"), cameraGain);
+        spotSpacing = asInt(saved.get("spotSpacing"), spotSpacing);
+        edgeMargin = asInt(saved.get("edgeMargin"), edgeMargin);
+        backgroundKappa = asDouble(saved.get("backgroundKappa"), backgroundKappa);
+        String channel = saved.get("spotChannel");
+        if ("sum".equals(channel) || "donor".equals(channel) || "acceptor".equals(channel)) {
+            spotChannel = channel;
+        }
+    }
+
+    private static int asInt(String value, int fallback) {
+        try {
+            return (value == null) ? fallback : Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private static double asDouble(String value, double fallback) {
+        try {
+            return (value == null) ? fallback : Double.parseDouble(value.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    /**
+     * Restore the last used settings as the dialog opens.
+     *
+     * <p>SciJava's own persistence does not cover this plugin. It saves a module's inputs
+     * when the module *completes*, and pressing Find spots invokes a callback on this object
+     * rather than running the module - so a value typed into the dialog was never written,
+     * while a value passed by a macro was. That is the bug: the settings that survived were
+     * whichever ones a macro last used.
+     */
+    @Override
+    public void initialize() {
+        if (prefs == null) {
+            return;
+        }
+        java.util.Map<String, String> saved = new java.util.LinkedHashMap<>();
+        for (String key : currentSettings().keySet()) {
+            String value = prefs.get(getClass(), key, null);
+            if (value != null) {
+                saved.put(key, value);
+            }
+        }
+        applySettings(saved);
+    }
+
+    /** Remember the settings, called when the user commits to them by running. */
+    void saveSettings() {
+        if (prefs == null) {
+            return;
+        }
+        for (java.util.Map.Entry<String, String> entry : currentSettings().entrySet()) {
+            prefs.put(getClass(), entry.getKey(), entry.getValue());
         }
     }
 }
