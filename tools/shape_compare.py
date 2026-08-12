@@ -84,9 +84,9 @@ def measure(img, xs, ys, sigma, noise):
 
 def load(tag, sigma):
     d = f"{tag}_{sigma}"
-    bg = tifffile.imread(f"{d}/sim_spotf_bg_smooth.tif").astype(np.float64)
-    fg = tifffile.imread(f"{d}/sim_spotf_qc_image.tif").astype(np.float64) - bg
-    sp = np.genfromtxt(f"{d}/sim_spotf_spots.csv", delimiter=",", names=True)
+    bg = tifffile.imread(f"{d}/sim_analysis/sim_spotf_bg_smooth.tif").astype(np.float64)
+    fg = tifffile.imread(f"{d}/sim_analysis/sim_spotf_qc_image.tif").astype(np.float64) - bg
+    sp = np.genfromtxt(f"{d}/sim_analysis/sim_spotf_spots.csv", delimiter=",", names=True)
     xs = np.atleast_1d(sp["x"]).astype(int)
     ys = np.atleast_1d(sp["y"]).astype(int)
     snr = np.atleast_1d(sp["snr"]).astype(float)

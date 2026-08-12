@@ -56,7 +56,8 @@ public class smFRETTraceVisualizer implements Command {
     File spotJSONFile;
 
     // The suffix smFRETSpotFinder appends to its root name when it writes the JSON. Stripping it
-    // recovers the root, which is what every other output is named from.
+    // recovers the root, which names the trace H5 beside it and the analysis folder holding the
+    // rest - see smFRETFiles.analysisRoot.
     private static final String JSON_SUFFIX = "_spotf_finding.json";
 
     // FRET is drawn over a fixed range, matching smFRETTraceHistogram so that the two views of
@@ -117,20 +118,22 @@ public class smFRETTraceVisualizer implements Command {
                 ? path.substring(0, path.length() - JSON_SUFFIX.length())
                 : (String) mapping.get("root name");
         File jsonDir = jsonFile.getAbsoluteFile().getParentFile();
+        String analysisRoot = smFRETFiles.analysisRoot(root);
 
         spotSigma = ((Number) mapping.get("spot sigma")).doubleValue();
         zoomHalfWidth = Math.max(6, (int) Math.round(4.0 * spotSigma));
 
-        File spotsFile = locate((String) mapping.get("spots file"), jsonDir, root + "_spotf_spots.csv");
+        File spotsFile = locate((String) mapping.get("spots file"), jsonDir, analysisRoot + "_spotf_spots.csv");
         File imageFile = locate((String) mapping.get("image name"), jsonDir, null);
         File mappingFile = locate((String) mapping.get("mapping file"), jsonDir, null);
-        File fieldFile = new File(root + "_spotf_qc_image.tif");
+        File fieldFile = new File(analysisRoot + "_spotf_qc_image.tif");
         File traceFile = new File(root + ".h5");
 
         if (!traceFile.exists()) {
             throw new smFRETAnalysisException("No traces at " + traceFile
                     + " - run smFRET Time Traces on this spot finder JSON first.");
         }
+        requireCurrentLayout(fieldFile, root);
         for (File needed : new File[] {spotsFile, imageFile, mappingFile, fieldFile}) {
             if ((needed == null) || !needed.exists()) {
                 throw new smFRETAnalysisException("Could not find " + needed
@@ -180,6 +183,26 @@ public class smFRETTraceVisualizer implements Command {
             }
         }
         return (derived == null) ? new File(String.valueOf(recorded)) : new File(derived);
+    }
+
+    /**
+     * Say that an analysis is from before the generated files moved, rather than that a file is
+     * missing.
+     *
+     * Worth the two lines. The two layouts differ by a directory, so the only symptom is a file
+     * that is not where it is looked for, and "Could not find hel1_analysis/hel1_spotf_qc_image.tif"
+     * reads as a corrupt analysis when the files are all there, one level up.
+     */
+    private static void requireCurrentLayout(File wanted, String root) {
+        if (wanted.exists()) {
+            return;
+        }
+        File flat = new File(root + "_spotf_qc_image.tif");
+        if (flat.exists()) {
+            throw new smFRETAnalysisException("This analysis was made before the generated files"
+                    + " moved into '" + new File(root).getName() + smFRETFiles.ANALYSIS_SUFFIX
+                    + "' - re-run smFRET Spot Finder and smFRET Time Traces on the movie.");
+        }
     }
 
     /**

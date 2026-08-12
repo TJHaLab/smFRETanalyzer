@@ -319,6 +319,7 @@ public class smFRETSpotFinder implements Command, Interactive, org.scijava.Initi
     private final boolean isHeadless = GraphicsEnvironment.isHeadless();
     public ImagePlus overlapMask;
     private String saveRootName;
+    private String analysisRootName;
     private final smFRETChannelMapper smfcm = new smFRETChannelMapper();  // smFREChannelMapper object.
 
     /**
@@ -1429,10 +1430,10 @@ public class smFRETSpotFinder implements Command, Interactive, org.scijava.Initi
 
         if (diagnostic_mode) {
             FileSaver fgSmoothImageSaver = new FileSaver(new ImagePlus("foreground_smooth", fgSmooth.processor));
-            fgSmoothImageSaver.saveAsTiff(saveRootName + "_spotf_fg_smooth.tif");
+            fgSmoothImageSaver.saveAsTiff(analysisRootName + "_spotf_fg_smooth.tif");
 
             FileSaver bgSmoothImageSaver = new FileSaver(new ImagePlus("background_smooth", bgSmooth.processor));
-            bgSmoothImageSaver.saveAsTiff(saveRootName + "_spotf_bg_smooth.tif");
+            bgSmoothImageSaver.saveAsTiff(analysisRootName + "_spotf_bg_smooth.tif");
         }
 
         return filteredSpots;
@@ -1633,6 +1634,11 @@ public class smFRETSpotFinder implements Command, Interactive, org.scijava.Initi
             }
             log.info("save root " + saveRootName);
 
+            // Everything except the finding JSON goes in the analysis folder. Made now rather
+            // than at the first save because the diagnostic images are written from inside the
+            // SNR filter, well before the run reaches its real outputs.
+            analysisRootName = smFRETFiles.createAnalysisRoot(saveRootName);
+
             buildChannelImages();
             Shared sum = channelImage();
             log.info("finding spots in the " + spotChannel + " image");
@@ -1688,8 +1694,8 @@ public class smFRETSpotFinder implements Command, Interactive, org.scijava.Initi
             }
 
             // save analysis results.
-            String masksFileName = saveRootName + "_spotf_masks.tif";
-            String spotsFileName = saveRootName +  "_spotf_spots.csv";
+            String masksFileName = analysisRootName + "_spotf_masks.tif";
+            String spotsFileName = analysisRootName +  "_spotf_spots.csv";
 
             // JSON file w/ analysis parameters, etc.
             Map<String, Object> mapping = new HashMap<>();
@@ -1726,7 +1732,7 @@ public class smFRETSpotFinder implements Command, Interactive, org.scijava.Initi
 
             // QC image w/ identified spots.
             FileSaver qcImageSaver = new FileSaver(sumImage);
-            qcImageSaver.saveAsTiff(saveRootName + "_spotf_qc_image.tif");
+            qcImageSaver.saveAsTiff(analysisRootName + "_spotf_qc_image.tif");
 
             // Masks that will be needed for extracting time traces.
             Concatenator cctr = new Concatenator();

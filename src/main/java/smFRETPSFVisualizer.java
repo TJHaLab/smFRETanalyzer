@@ -45,7 +45,7 @@ public class smFRETPSFVisualizer implements Command {
     File spotJSONFile;
 
     // The suffix smFRETSpotFinder appends to its root name. Stripping it recovers the root, which
-    // is what the other outputs are named from - the recorded "root name" is relative to whatever
+    // the other outputs are named from - the recorded "root name" is relative to whatever
     // directory stage 2 ran in and does not survive being opened from anywhere else.
     private static final String JSON_SUFFIX = "_spotf_finding.json";
 
@@ -145,7 +145,8 @@ public class smFRETPSFVisualizer implements Command {
         firstFrame = intOr(mapping.get("start slice"), 1);
         lastFrame = intOr(mapping.get("end slice"), Integer.MAX_VALUE);
 
-        File spotsFile = locate((String) mapping.get("spots file"), jsonDir, root + "_spotf_spots.csv");
+        File spotsFile = locate((String) mapping.get("spots file"), jsonDir,
+                smFRETFiles.analysisRoot(root) + "_spotf_spots.csv");
         File imageFile = locate((String) mapping.get("image name"), jsonDir, null);
         File mappingFile = locate((String) mapping.get("mapping file"), jsonDir, null);
         for (File needed : new File[] {spotsFile, imageFile, mappingFile}) {

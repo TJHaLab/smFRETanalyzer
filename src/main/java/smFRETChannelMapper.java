@@ -515,6 +515,9 @@ public class smFRETChannelMapper implements Command {
             }
             log.info("save root " + saveRootName);
 
+            // Everything except the mapping JSON itself goes in the analysis folder.
+            String analysisRootName = smFRETFiles.createAnalysisRoot(saveRootName);
+
             // Load the image to process. openImage says what the file is when it is not an image
             // at all, which is the mistake the file chooser cannot prevent.
             ImagePlus inputImage = smFRETFiles.openImage(inputImageName, "the mapping image");
@@ -531,7 +534,7 @@ public class smFRETChannelMapper implements Command {
 
             FileSaver averageImageFileSaver = new FileSaver(averageImage);
             if (diagnostic_mode){
-                averageImageFileSaver.saveAsTiff(saveRootName + "_mapping_average_image.tif");
+                averageImageFileSaver.saveAsTiff(analysisRootName + "_mapping_average_image.tif");
             }
 
             // Split average vertically.
@@ -550,7 +553,7 @@ public class smFRETChannelMapper implements Command {
 
             FileSaver targetImageFileSaver = new FileSaver(averageImageTarget);
             if (diagnostic_mode){
-                targetImageFileSaver.saveAsTiff(saveRootName + "_mapping_average_target.tif");
+                targetImageFileSaver.saveAsTiff(analysisRootName + "_mapping_average_target.tif");
             }
 
             // Source image.
@@ -561,7 +564,7 @@ public class smFRETChannelMapper implements Command {
 
             FileSaver sourceImageFileSaver = new FileSaver(averageImageSource);
             if (diagnostic_mode){
-                sourceImageFileSaver.saveAsTiff(saveRootName + "_mapping_average_source.tif");
+                sourceImageFileSaver.saveAsTiff(analysisRootName + "_mapping_average_source.tif");
             }
 
             // Find correspondence using TurboReg.
@@ -657,7 +660,7 @@ public class smFRETChannelMapper implements Command {
 
             // Save QC image.
             FileSaver qcImageFileSaver = new FileSaver(rgbImageQCImage);
-            String pathAndFileName = saveRootName + "_mapping_qc_image.tif";
+            String pathAndFileName = analysisRootName + "_mapping_qc_image.tif";
             log.info(pathAndFileName);
             qcImageFileSaver.saveAsTiff(pathAndFileName);
 

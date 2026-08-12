@@ -77,12 +77,12 @@ def prominence(img, xs, ys, offsets, how, ideal, noise=None):
 
 def load(tag, sigma):
     d = f"{tag}_{sigma}"
-    bg = tifffile.imread(f"{d}/sim_spotf_bg_smooth.tif").astype(np.float64)
-    raw = tifffile.imread(f"{d}/sim_spotf_qc_image.tif").astype(np.float64) - bg
-    smooth = tifffile.imread(f"{d}/sim_spotf_fg_smooth.tif").astype(np.float64)
+    bg = tifffile.imread(f"{d}/sim_analysis/sim_spotf_bg_smooth.tif").astype(np.float64)
+    raw = tifffile.imread(f"{d}/sim_analysis/sim_spotf_qc_image.tif").astype(np.float64) - bg
+    smooth = tifffile.imread(f"{d}/sim_analysis/sim_spotf_fg_smooth.tif").astype(np.float64)
     noiseImg = np.sqrt(np.maximum(0.0, bg - 2 * BLACK) / (GAIN * FRAMES))
 
-    sp = np.genfromtxt(f"{d}/sim_spotf_spots.csv", delimiter=",", names=True)
+    sp = np.genfromtxt(f"{d}/sim_analysis/sim_spotf_spots.csv", delimiter=",", names=True)
     xs = np.atleast_1d(sp["x"]).astype(int)
     ys = np.atleast_1d(sp["y"]).astype(int)
 

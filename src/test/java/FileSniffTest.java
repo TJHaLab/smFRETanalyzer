@@ -206,4 +206,50 @@ class FileSniffTest {
                 () -> smFRETFiles.requireReadable(null, "a mapping"));
         assertTrue(none.getMessage().contains("no file was given"), none.getMessage());
     }
+
+    /**
+     * Where the generated files go, from the movie's root name.
+     *
+     * The bare name is the case worth pinning: a macro that passes a relative path gets a root
+     * with no directory at all, and the folder still has to come out beside it rather than in
+     * whatever the working directory happens to be.
+     */
+    @Test
+    @DisplayName("the analysis root is a folder beside the movie, named from it")
+    void theAnalysisRootIsBesideTheMovie() {
+        assertEquals(new File("/data/hel1_analysis/hel1").getPath(),
+                smFRETFiles.analysisRoot("/data/hel1"));
+        assertEquals(new File("hel1_analysis/hel1").getPath(),
+                smFRETFiles.analysisRoot("hel1"));
+
+        // A dot in the directory rather than the file - the root has already had the extension
+        // stripped by the time it gets here, so nothing may be stripped again.
+        assertEquals(new File("/data/run.2/hel1_analysis/hel1").getPath(),
+                smFRETFiles.analysisRoot("/data/run.2/hel1"));
+    }
+
+    /**
+     * The folder is made before anything is written to it. FileSaver.saveAsTiff returns a boolean
+     * nobody checks, so a missing folder would otherwise be an analysis that reports success and
+     * leaves nothing behind.
+     */
+    @Test
+    @DisplayName("the analysis folder is created, and saying so beats a silent failure")
+    void theAnalysisFolderIsCreated(@TempDir File directory) throws Exception {
+        String root = smFRETFiles.createAnalysisRoot(new File(directory, "hel1").toString());
+        File folder = new File(directory, "hel1_analysis");
+        assertTrue(folder.isDirectory(), "no folder at " + folder);
+        assertEquals(new File(folder, "hel1").getPath(), root);
+
+        // Twice in a row is the ordinary case - re-running spot finding on the same movie.
+        assertDoesNotThrow(() -> smFRETFiles.createAnalysisRoot(new File(directory, "hel1").toString()));
+
+        // A file where the folder should go. Not a case a user hits often, but the alternative
+        // is mkdirs returning false and every save afterwards quietly doing nothing.
+        File blocked = new File(directory, "movie_analysis");
+        Files.write(blocked.toPath(), "not a folder".getBytes(StandardCharsets.UTF_8));
+        smFRETAnalysisException thrown = assertThrows(smFRETAnalysisException.class,
+                () -> smFRETFiles.createAnalysisRoot(new File(directory, "movie").toString()));
+        assertTrue(thrown.getMessage().contains("movie_analysis"), thrown.getMessage());
+    }
 }

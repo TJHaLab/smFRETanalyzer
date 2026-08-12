@@ -78,7 +78,7 @@ class SpotContaminationFilterTest {
     }
 
     private static ResultsTable table(File directory) {
-        return ResultsTable.open2(new File(directory, "field_spotf_spots.csv").toString());
+        return ResultsTable.open2(new File(directory, "field_analysis/field_spotf_spots.csv").toString());
     }
 
     @Test
@@ -183,7 +183,7 @@ class SpotContaminationFilterTest {
         finder.findSpots();
 
         double[][] reloaded = finder.loadSpotLocations(
-                new File(directory, "field_spotf_spots.csv").toString());
+                new File(directory, "field_analysis/field_spotf_spots.csv").toString());
         ResultsTable rt = table(directory);
 
         assertEquals(rt.getCounter(), reloaded.length, "row count");

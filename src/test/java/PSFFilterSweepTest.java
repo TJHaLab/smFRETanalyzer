@@ -193,8 +193,9 @@ class PSFFilterSweepTest {
         analyzer.backgroundAverageNFrames = FRAMES;
         analyzer.smfsf.log = log;
         analyzer.smfsf.loadMappingJSON(mappingFile.toString());
-        analyzer.smfsf.loadMasks(root + "_spotf_masks.tif");
-        double[][] found = analyzer.smfsf.loadSpotLocations(root + "_spotf_spots.csv");
+        analyzer.smfsf.loadMasks(smFRETFiles.analysisRoot(root) + "_spotf_masks.tif");
+        double[][] found = analyzer.smfsf.loadSpotLocations(
+                smFRETFiles.analysisRoot(root) + "_spotf_spots.csv");
         assertTrue(found.length > (0.8 * placed.size()),
                 "only " + found.length + " of " + placed.size() + " spots were found");
 

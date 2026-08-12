@@ -8,6 +8,24 @@ Most of the defaults were chosen by running the analysis against simulated data 
 
 ## Documentation ##
 
+### Where the files go
+
+Every stage writes next to the movie it was run on. Analysing `hel1.tif` leaves the movie's own folder holding four things:
+
+```
+hel1.tif                    the movie
+hel1_mapping.json           from smFRETChannelMapper
+hel1_spotf_finding.json     from smFRETSpotFinder
+hel1.h5                     from smFRETAnalyzer
+hel1_analysis/              everything else
+```
+
+Those three are the files worth keeping and passing on: the two JSONs record how the analysis was run, and the `.h5` holds the traces. Everything else - the QC images, the spot table, the masks and the `.traces` file - goes in `hel1_analysis/`, which is created for you.
+
+Re-running a stage overwrites its own outputs, so what is on disk always matches the settings you last ran. Deleting `hel1_analysis/` costs you the QC images and the `.traces` file; re-run spot finding to get them back.
+
+The plugins find these files themselves, so you only ever choose the movie and the JSONs. **An analysis made before the outputs moved into the folder cannot be opened in the viewers** - re-run smFRETSpotFinder and smFRETAnalyzer on the movie, which is quick.
+
 ### Choosing the right input file
 
 Every file parameter checks what it was given before it uses it, and says what the file actually is when it is the wrong one - for example, choosing `hel1_spotf_finding.json` where the mapping was wanted gives
@@ -33,7 +51,7 @@ This plugin is used to find an affine mapping between the donor/target and accep
 #### Outputs:
 
 * <image_name>_mapping.json - A JSON file with affine transform.
-* <image_name>_mapping_qc_image.tif - A two color TIF image showing the result of applying the mapping to the target/source channel.
+* <image_name>_analysis/<image_name>_mapping_qc_image.tif - A two color TIF image showing the result of applying the mapping to the target/source channel.
 
 ### smFRETSpotFinder
 
@@ -64,8 +82,9 @@ Re-running only redoes the work that can change. The averaged, split and mapped 
 #### Outputs:
 
 * <image_name>_spotf_finding.json - A JSON file with the files and parameters used for spot finding.
-* <image_name>_spotf_qc_image.tif - A TIF image with the spot locations overlaid on top.
-* <image_name>_spotf_masks.tif - A two frame TIF stack with the overlap mask and foreground mask.
+* <image_name>_analysis/<image_name>_spotf_spots.csv - The surviving spots, one row each, with the position and the scores they were kept on.
+* <image_name>_analysis/<image_name>_spotf_qc_image.tif - A TIF image with the spot locations overlaid on top.
+* <image_name>_analysis/<image_name>_spotf_masks.tif - A two frame TIF stack with the overlap mask and foreground mask.
 
 ### smFRETAnalyzer
 
@@ -79,7 +98,7 @@ This plugin measures the FRET time traces for each of the spots in the FRET imag
 #### Outputs:
 
 * <image_name>.h5 - A HDF5 format file with analysis metadata, spot locations and statistics, donor/target time traces and acceptor/source time traces. Trace values are each spot's **integrated** intensity in that frame, in photoelectrons if CameraGain is set correctly - not the peak pixel value.
-* <image_name>.traces - A binary file with the time traces in the Taekjip Ha lab format.
+* <image_name>_analysis/<image_name>.traces - A binary file with the time traces in the Taekjip Ha lab format.
 
 ### smFRETTraceHistogram
 

@@ -68,6 +68,44 @@ final class smFRETFiles {
     // Enough to carry every signature tested for, and a header line for the CSV.
     private static final int HEAD_BYTES = 512;
 
+    // Appended to the movie's root name to name the folder the generated files go in.
+    static final String ANALYSIS_SUFFIX = "_analysis";
+
+    /**
+     * Where generated files are written, as a path prefix they are all named from.
+     *
+     * A run leaves the movie's own directory holding the movie and the three files worth
+     * handing to someone else - the two JSONs and the trace H5 - and puts everything else in
+     * '<movie>_analysis'. So hel1.tif gives a root of hel1_analysis/hel1, and the masks are
+     * hel1_analysis/hel1_spotf_masks.tif.
+     *
+     * The names inside the folder keep the movie's prefix rather than dropping it. It is
+     * redundant with the folder, but it means a file that is copied or attached to a mail
+     * still says which movie it came from, and two folders' contents can be dropped in one
+     * directory without colliding.
+     */
+    static String analysisRoot(String saveRootName) {
+        File root = new File(saveRootName);
+        return new File(root.getPath() + ANALYSIS_SUFFIX, root.getName()).getPath();
+    }
+
+    /**
+     * analysisRoot, with the folder made.
+     *
+     * Failing here rather than at the first save is deliberate: FileSaver.saveAsTiff returns a
+     * boolean nobody checks, so a missing folder would otherwise show up as an analysis that
+     * ran to completion and wrote nothing.
+     */
+    static String createAnalysisRoot(String saveRootName) {
+        String root = analysisRoot(saveRootName);
+        File directory = new File(root).getParentFile();
+        if ((directory != null) && !directory.isDirectory() && !directory.mkdirs()) {
+            throw new smFRETAnalysisException("Could not create the output folder " + directory
+                    + " - check that the movie's directory is writable.");
+        }
+        return root;
+    }
+
     /**
      * Open a movie parameter, or say what the file is instead of an image.
      *

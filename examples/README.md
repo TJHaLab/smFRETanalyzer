@@ -14,6 +14,9 @@ input, so work on a copy if you want to keep the folder clean.
    parameter reference in [../README.md](../README.md) before changing them.
 3. **smFRET Time Traces** on `hel1_spotf_finding.json`. Writes `hel1.h5` and `hel1.traces`.
 
+Only the two JSONs and `hel1.h5` land beside the movie; the rest go in a `hel1_analysis` folder
+created alongside it. See [../README.md](../README.md) for the full layout.
+
 The two viewers and the PSF visualizer then read those outputs. smFRETPSFVisualizer only needs
 the spot-finder JSON, so it can be run straight after step 2.
 

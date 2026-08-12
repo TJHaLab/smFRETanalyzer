@@ -70,6 +70,7 @@ public class smFRETAnalyzer implements Command {
     private final boolean diagnostic_mode = Boolean.getBoolean("smfret.diagnostics");
     private final boolean isHeadless = GraphicsEnvironment.isHeadless();
     private String saveRootName;
+    private String analysisRootName;
     private final boolean saveAsTraces = true;
     final smFRETSpotFinder smfsf = new smFRETSpotFinder();
 
@@ -129,10 +130,10 @@ public class smFRETAnalyzer implements Command {
 
         if (diagnostic_mode) {
             FileSaver fgSmoothImageSaver = new FileSaver(targetBgImp);
-            fgSmoothImageSaver.saveAsTiff(saveRootName + "_fret_target_bg.tif");
+            fgSmoothImageSaver.saveAsTiff(analysisRootName + "_fret_target_bg.tif");
 
             FileSaver bgSmoothImageSaver = new FileSaver(sourceBgImp);
-            bgSmoothImageSaver.saveAsTiff(saveRootName + "_fret_source_bg.tif");
+            bgSmoothImageSaver.saveAsTiff(analysisRootName + "_fret_source_bg.tif");
         }
 
         java.util.List<ImagePlus> images = new ArrayList<>();
@@ -365,6 +366,7 @@ public class smFRETAnalyzer implements Command {
             // cleanly as this one, so the read checks for a key only the spot finder writes.
             Map<String, Object> mapping = smFRETFiles.readSpotFinderJSON(spotJSONFile);
             saveRootName = (String) mapping.get("root name");
+            analysisRootName = smFRETFiles.createAnalysisRoot(saveRootName);
             String inputImageName = (String) mapping.get("image name");
             String mappingFileName = (String) mapping.get("mapping file");
             String masksFileName = (String) mapping.get("masks file");
@@ -421,7 +423,7 @@ public class smFRETAnalyzer implements Command {
 
             // Save time traces in '.traces' format:
             if (saveAsTraces){
-                saveToTracesFile(saveRootName + ".traces", timeTraces);
+                saveToTracesFile(analysisRootName + ".traces", timeTraces);
             }
 
             // Save time traces, spot locations and metadata to .h5 file.

@@ -71,6 +71,11 @@ by reading `_spotf_bg_smooth.tif` and `_spotf_fg_smooth.tif`, which the plugins 
 that property is set - it is off for normal use. `tune_sweep.py` passes it already; anything
 driving `RunTune` or `Rig` by hand has to.
 
+**Everything the plugins generate now lands in `<movie>_analysis/`,** not beside the movie -
+only the two JSONs and the trace `.h5` stay put. So a sweep run in `tol_400_2.0/` reads its spot
+table from `tol_400_2.0/sim_analysis/sim_spotf_spots.csv`. The scripts here were updated with
+the layout; a scratch directory from an older run has the files one level up and will not score.
+
 ## A caveat on the numbers
 
 The example movies are 30 frames and their end-of-movie drop is **the illumination laser being
