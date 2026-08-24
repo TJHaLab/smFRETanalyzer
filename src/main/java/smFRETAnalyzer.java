@@ -416,7 +416,12 @@ public class smFRETAnalyzer implements Command {
             // Under diagnostic_mode along with the TIFs of these same two images, which is the
             // flag it always should have been under: turning diagnostics off stopped the files
             // being written but left the windows opening.
-            if (diagnostic_mode && !isHeadless) {
+            //
+            // The null check is for smFRET Batch Analysis, which constructs this directly and so
+            // has no UIService to inject. Without it, turning diagnostics on would throw here -
+            // after the measurement and *before* the .h5 is written, so a batch run with
+            // diagnostics on would report every movie as having failed trace measurement.
+            if (diagnostic_mode && !isHeadless && (ui != null)) {
                 ui.show(bgEstimates.get(0));
                 ui.show(bgEstimates.get(1));
             }

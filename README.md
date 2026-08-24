@@ -232,6 +232,35 @@ Nothing is written unless you ask for it:
 * <image_name>_psf.csv - The radial profiles, corrected and uncorrected, with the fits in the header, via 'Save CSV'.
 * <image_name>_psf.png - The four panels, titled with the file name, via 'Save PNG'.
 
+### smFRETBatchAnalyzer
+
+Runs spot finding and trace measurement over a folder of movies unattended. The two stages are unchanged - this constructs the same plugins and runs them movie by movie - so a batch is "do to these forty movies what I just did to this one".
+
+The settings come from an **example run** rather than from a dialog: choose the `_spotf_finding.json` that an smFRET Spot Finder run wrote and every setting in it is copied onto each movie in the queue. That is deliberate rather than a shortcut. The settings this pipeline is sensitive to are chosen by looking at the QC image, so a batch should copy a run that was looked at, and there is nowhere in a batch window that is a good place to be choosing a spot threshold.
+
+**The mapping is not asked for.** A spot finder JSON records the mapping its own run used, so an example run already names one - asking again would be a question whose answer is in the file you just chose. If that mapping has since moved, the settings line says so and names the path; re-run smFRET Spot Finder on one movie with the mapping you want and use that run's settings file.
+
+**An estimated spot tolerance is re-measured per movie.** The JSON records the value that was *used*, so a run that estimated its tolerance records a number like 6.01. Copying that number would give every movie in the batch one movie's noise floor, which is the thing the estimate exists to avoid, so what is copied is the decision to estimate. A tolerance that was typed in is a choice and is copied as it stands. The settings line says which: 'tolerance estimated' or a number.
+
+Settings files written by older versions still work. Any key that is absent - a spot channel from before 1.2, a slice range from before that - leaves its parameter at the shipped default rather than failing the batch.
+
+#### Controls:
+
+* Settings... - The `_spotf_finding.json` whose settings to copy. The line beside it is what the batch will run with, so it can be read before anything starts.
+* Movies - The queue. Drop movies anywhere on this panel or use 'Add movies...'. Files that are not movies are left out and named, so dropping a whole folder in queues the movies and says what it skipped rather than failing on each JSON and CSV in turn several minutes apart. The × beside a movie removes it, and the queue runs in name order.
+* Background frames - The number of frames each background estimate is averaged over, the one setting smFRET Time Traces takes. There is no traces settings file to copy this from, so it is typed here.
+* Analyze - Starts the batch, and becomes Stop while one is running. **Stop takes effect between movies**, not during one: neither stage can be interrupted part way without leaving half-written output behind.
+
+Movies are analysed one at a time. Both stages are already bounded by reading the movie and by memory, so running two at once would gain little, and ImageJ's global state is not worth sharing between two analyses.
+
+Each movie's progress bar has two steps, and the fill is *finished* stages rather than a guess at how far through the current one it is - neither stage reports its own progress, so a bar that crept would be inventing the number. The text beside it says what is happening now, and what went wrong if the movie failed.
+
+A movie that fails does not stop the batch; the rest still run, and the count at the end says how many failed. The reason is on the row, in its tooltip in full, and in the Log window.
+
+#### Outputs:
+
+Exactly what running the two stages by hand would produce, beside each movie: see smFRETSpotFinder and smFRETAnalyzer above.
+
 ## Input requirements ##
 
 The image stack must be a **time series**: one frame per time point, both FRET channels side by side within each frame. ImageJ cannot distinguish a movie from a depth stack saved as a plain TIFF, so a stack with a single non-singleton axis is taken as time whichever way ImageJ labelled it. Images with both depth and time, or with more than one channel, are refused — reduce them with `Image > Hyperstacks > Hyperstack to Stack` first.

@@ -325,6 +325,11 @@ public class smFRETSpotFinder implements Command, Interactive, org.scijava.Initi
     // final; just not constant.
     private final boolean diagnostic_mode = Boolean.getBoolean("smfret.diagnostics");
     private final boolean isHeadless = GraphicsEnvironment.isHeadless();
+
+    // Whether a finished run puts its QC image on screen. True for the dialog, whose whole point
+    // is looking at it, and false for smFRET Batch Analysis, which would otherwise flash one
+    // image per movie past the user - and needs no UIService injected to avoid it.
+    boolean showQCImage = true;
     public ImagePlus overlapMask;
     private String saveRootName;
     private String analysisRootName;
@@ -1778,7 +1783,7 @@ public class smFRETSpotFinder implements Command, Interactive, org.scijava.Initi
 
             // One window, updated in place. Showing a new one per run would leave a window per
             // parameter adjustment, which is the opposite of what an interactive dialog is for.
-            if (!isHeadless) {
+            if (!isHeadless && showQCImage) {
                 if ((qcWindow != null) && (qcWindow.getWindow() != null)) {
                     qcWindow.setProcessor(sum.processor);
                     qcWindow.setOverlay(ov);

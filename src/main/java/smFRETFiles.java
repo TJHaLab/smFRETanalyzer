@@ -207,6 +207,21 @@ final class smFRETFiles {
     }
 
     /**
+     * Whether this file is a movie, by its first bytes rather than by its name.
+     *
+     * For smFRET Batch Analysis, which fills its queue by dropping a folder in. That drop carries
+     * the JSONs, the CSVs and the '.h5' that sit beside the movies, and queueing them would fail
+     * one at a time several minutes apart - so they are left out, and named as left out, at the
+     * moment the folder is dropped.
+     *
+     * A sniff and nothing more. Whether the file is a two channel stack this pipeline can use is
+     * openImage's question, and it is asked when the analysis reaches that movie.
+     */
+    static boolean isMovie(File file) {
+        return (file != null) && file.isFile() && TIFF_IS.equals(describe(file));
+    }
+
+    /**
      * Refuse anything that is not the spot table before ResultsTable is asked to parse it.
      *
      * ResultsTable.open2 does not fail on a binary file - it returns a table of whatever it made
