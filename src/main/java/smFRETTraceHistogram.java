@@ -97,11 +97,22 @@ public class smFRETTraceHistogram implements Command {
     private final RangeSlider[] valueRangeSliders = new RangeSlider[N_FILTERS];
     int nFrames = 0;
     int nSpots = 0;
+    private JCheckBox overlayBox;
+
+    // The overlay's per file curves, and the mean of them, or null when the box is unticked.
+    // Held rather than recomputed at paint time: the panel repaints on every expose, and these
+    // cost a pass over every trace.
+    private Histogram[] fileResults;
+    private double[] meanCounts;
+    private int overlayMax;
     private HistogramPanel plotPanel;
 
     // Every file loaded, ticked or not, in name order. The combined matrices above are
     // rebuilt from whichever of these are ticked (issue #22).
     final java.util.List<TraceFile> pool = new ArrayList<>();
+
+    // The last combine(), kept for the spot span of each ticked file.
+    private Combined spans;
     private JPanel poolPanel;
     private Histogram result;
     float[][] sourceTraces;      // [spot][frame], acceptor.
@@ -218,23 +229,44 @@ public class smFRETTraceHistogram implements Command {
     }
 
     /**
-     * Bin the loaded traces. Takes its settings as arguments rather than reading the controls
-     * directly so that the binning can be exercised without a GUI.
+     * The value of every trace in a span of spots that survived the three ranges.
+     *
+     * Split out of the binning so that the overlay's per file curves can be dropped into the
+     * *same* bins as the pooled histogram (issue #22 follow-up). Whichever bins are chosen, the
+     * arithmetic deciding which traces survive and what each one is worth has to be one piece of
+     * code, or the curves would be comparable only by coincidence.
      */
-    Histogram computeHistogram(int type, int firstFrame, int lastFrame,
-                               Filters filters, int nBins,
-                               Corrections corrections) {
+    static final class Values {
+
+        final int[] nRejectedBy = new int[N_FILTERS];
+        int nValues;
+        int nSpotsUsed;
+        final double[] values;
+
+        Values(int capacity) {
+            values = new double[capacity];
+        }
+    }
+
+    /**
+     * One value per surviving trace, over the spots in [firstSpot, lastSpot).
+     *
+     * The span is into the combined matrices, which combine() lays out one file after another -
+     * so a file is a contiguous run of spots and the overlay needs no copy of anything.
+     *
+     * Takes its settings as arguments rather than reading the controls, so the measurement can be
+     * exercised without a GUI.
+     */
+    Values traceValues(int type, int firstFrame, int lastFrame, Filters filters,
+                       Corrections corrections, int firstSpot, int lastSpot) {
 
         // One point per trace, the average over the selected interval. For FRET the donor and
         // acceptor are averaged first and the ratio taken from those averages - averaging the
         // per frame ratios instead would not give the same answer.
-        double[] values = new double[nSpots];
-        int nValues = 0;
-        int nSpotsUsed = 0;
+        Values out = new Values(Math.max(0, lastSpot - firstSpot));
         int nIntervalFrames = lastFrame - firstFrame + 1;
-        int[] nRejectedBy = new int[N_FILTERS];
 
-        for (int i = 0; i < nSpots; i++) {
+        for (int i = firstSpot; i < lastSpot; i++) {
             double donorSum = 0.0;
             double acceptorSum = 0.0;
 
@@ -270,7 +302,7 @@ public class smFRETTraceHistogram implements Command {
             boolean rejected = false;
             for (int f = 0; f < N_FILTERS; f++) {
                 if (rejectedBy[f]) {
-                    nRejectedBy[f] += 1;
+                    out.nRejectedBy[f] += 1;
                     rejected = true;
                 }
             }
@@ -284,6 +316,7 @@ public class smFRETTraceHistogram implements Command {
 
             double value;
             if (type == TYPE_FRET) {
+
                 // A near zero total makes the ratio meaningless, not just noisy.
                 if (Math.abs(total) < 1.0e-9) {
                     continue;
@@ -297,20 +330,37 @@ public class smFRETTraceHistogram implements Command {
                 value = total;
             }
 
-            values[nValues++] = value;
-            nSpotsUsed += 1;
+            out.values[out.nValues++] = value;
+            out.nSpotsUsed += 1;
         }
+        return out;
+    }
 
+    /**
+     * Bin values that have already been measured.
+     *
+     * fixedLo and fixedHi are the range to bin over, or NaN to take it from the values - which is
+     * what a pooled histogram does. The overlay passes the pooled range so that every file lands
+     * on the same bin edges: auto ranging each file separately would put the curves on different
+     * axes, and the comparison they exist for would be between two different pictures.
+     */
+    static Histogram bin(Values measured, int type, int nBins, double fixedLo, double fixedHi) {
         Histogram hist = new Histogram();
         hist.counts = new int[nBins];
-        hist.nSpotsUsed = nSpotsUsed;
-        hist.nRejectedBy = nRejectedBy;
+        hist.nSpotsUsed = measured.nSpotsUsed;
+        hist.nRejectedBy = measured.nRejectedBy;
         hist.valueLabel = TYPE_NAMES[type];
+
+        double[] values = measured.values;
+        int nValues = measured.nValues;
 
         // Fixed range for FRET efficiency, auto range for the intensity histograms.
         double lo;
         double hi;
-        if (type == TYPE_FRET) {
+        if (!Double.isNaN(fixedLo) && !Double.isNaN(fixedHi)) {
+            lo = fixedLo;
+            hi = fixedHi;
+        } else if (type == TYPE_FRET) {
             lo = FRET_MIN;
             hi = FRET_MAX;
         } else {
@@ -360,6 +410,17 @@ public class smFRETTraceHistogram implements Command {
         }
 
         return hist;
+    }
+
+    /**
+     * Bin the loaded traces. Takes its settings as arguments rather than reading the controls
+     * directly so that the binning can be exercised without a GUI.
+     */
+    Histogram computeHistogram(int type, int firstFrame, int lastFrame,
+                               Filters filters, int nBins,
+                               Corrections corrections) {
+        return bin(traceValues(type, firstFrame, lastFrame, filters, corrections, 0, nSpots),
+                type, nBins, Double.NaN, Double.NaN);
     }
 
     /**
@@ -424,6 +485,64 @@ public class smFRETTraceHistogram implements Command {
     }
 
     /**
+     * Colours for the overlaid per file curves, cycled when there are more files than colours.
+     *
+     * The Okabe-Ito qualitative palette, which is built to stay distinguishable under the common
+     * forms of colour blindness - the point of this plot is telling one file's curve from
+     * another's, so a palette that collapses for some readers fails at the only thing it does.
+     * Its pale yellow is left out: legible on a dark ground, not on this one.
+     */
+    // The mean's line, shared by the curve and its key so the two cannot drift apart. Heavier
+    // than a file's and drawn last, since it is the curve every other one is read against.
+    private static final Color MEAN_COLOR = new Color(130, 130, 130);
+    private static final float MEAN_WIDTH = 3.5f;
+
+    private static final Color[] FILE_COLORS = {
+        new Color(0, 114, 178),     // blue
+        new Color(213, 94, 0),      // vermillion
+        new Color(0, 158, 115),     // bluish green
+        new Color(204, 121, 167),   // reddish purple
+        new Color(230, 159, 0),     // orange
+        new Color(86, 180, 233),    // sky blue
+        new Color(120, 94, 240),    // violet
+        new Color(70, 70, 70),      // near black
+    };
+
+    /**
+     * The colour of a file's curve, keyed to its place in the pool rather than to its place among
+     * the ticked files - so unticking one does not recolour all the others, which would undo the
+     * comparison being made at the moment it is made.
+     */
+    static Color fileColor(int poolIndex) {
+        return FILE_COLORS[Math.floorMod(poolIndex, FILE_COLORS.length)];
+    }
+
+    /**
+     * The mean of several per file curves, bin by bin.
+     *
+     * The reference the overlay draws behind the files. The *sum* would be the pooled histogram
+     * and is what the unticked box already shows, but it lives on a scale N times the files' -
+     * so with a dozen files every curve would be squeezed into the bottom of the plot, which is
+     * the opposite of what overlaying them is for. The mean sits among them on their own scale
+     * and answers the question actually being asked, which is which file departs from the rest.
+     */
+    static double[] meanCounts(Histogram[] each, int nBins) {
+        double[] mean = new double[nBins];
+        if (each.length == 0) {
+            return mean;
+        }
+        for (Histogram hist : each) {
+            for (int i = 0; i < nBins; i++) {
+                mean[i] += hist.counts[i];
+            }
+        }
+        for (int i = 0; i < nBins; i++) {
+            mean[i] /= each.length;
+        }
+        return mean;
+    }
+
+    /**
      * The intensity the range slider is currently applied to.
      */
     static double filterValue(int filterType, double donor, double acceptor, double total) {
@@ -484,6 +603,108 @@ public class smFRETTraceHistogram implements Command {
             }
         }
 
+        /**
+         * The per file curves, with the mean of them behind.
+         *
+         * Lines and points rather than bars, which is the whole reason the overlay is a separate
+         * mode: a dozen files drawn as bars would be a dozen slivers per bin, each too narrow to
+         * have a shape - and the shape is all anyone is comparing.
+         */
+        private void drawOverlay(Graphics2D g2, int plotWidth, int plotHeight, int nBins,
+                                 double yScale) {
+            if (fileResults == null) {
+                return;
+            }
+
+            java.awt.Stroke was = g2.getStroke();
+
+            // Markers only while they are still individually visible. At 200 bins a dot per bin
+            // is a solid smear that hides the line it is there to mark.
+            boolean markers = nBins <= 60;
+
+            java.util.List<TraceFile> included = includedFiles();
+            g2.setStroke(new BasicStroke(1.6f));
+            for (int f = 0; f < fileResults.length; f++) {
+                g2.setColor(fileColor(pool.indexOf(included.get(f))));
+
+                int[] counts = fileResults[f].counts;
+                double[] asDouble = new double[nBins];
+                for (int i = 0; i < nBins; i++) {
+                    asDouble[i] = counts[i];
+                }
+                drawCurve(g2, asDouble, plotWidth, plotHeight, nBins, yScale, markers);
+            }
+
+            // The mean last, so it is on top rather than glimpsed between the files. It is the
+            // one curve every other curve is being read against, so it is the one that must not
+            // be the one hidden - and with six files there is always something drawn over it.
+            if (meanCounts != null) {
+                g2.setColor(MEAN_COLOR);
+                g2.setStroke(new BasicStroke(MEAN_WIDTH));
+                drawCurve(g2, meanCounts, plotWidth, plotHeight, nBins, yScale, false);
+                drawMeanKey(g2, plotWidth, fileResults.length);
+            }
+            g2.setStroke(was);
+        }
+
+        /**
+         * The key for the grey curve, at the top right of the plot.
+         *
+         * The file curves are keyed by the swatches in the pool list, but the mean is not a file
+         * and has nowhere in that list to be - so it says what it is beside itself. Naming the
+         * file count as well, because "mean" alone leaves open whether it is the mean of the
+         * ticked files or of everything loaded.
+         *
+         * On a white backing: it sits inside the plot area, where a curve may well run under it.
+         */
+        private void drawMeanKey(Graphics2D g2, int plotWidth, int nFiles) {
+            String text = "mean of " + nFiles + " files";
+            FontMetrics fm = g2.getFontMetrics();
+
+            int sample = 24;
+            int gap = 6;
+            int width = sample + gap + fm.stringWidth(text);
+            int right = MARGIN_LEFT + plotWidth - 4;
+            int baseline = MARGIN_TOP + 4 + fm.getAscent();
+            int left = right - width;
+
+            g2.setColor(new Color(255, 255, 255, 215));
+            g2.fillRect(left - 5, baseline - fm.getAscent() - 3, width + 10, fm.getHeight() + 4);
+
+            int lineY = baseline - fm.getAscent() / 2 + 1;
+            g2.setColor(MEAN_COLOR);
+            g2.setStroke(new BasicStroke(MEAN_WIDTH));
+            g2.drawLine(left, lineY, left + sample, lineY);
+            g2.drawString(text, left + sample + gap, baseline);
+        }
+
+        /** The x of a bin's centre, which is where the value in that bin actually sits. */
+        private int binCenterX(int bin, int plotWidth, int nBins) {
+            return MARGIN_LEFT + (int) Math.round((bin + 0.5) * plotWidth / nBins);
+        }
+
+        private void drawCurve(Graphics2D g2, double[] counts, int plotWidth, int plotHeight,
+                               int nBins, double yScale, boolean markers) {
+            int[] xs = new int[nBins];
+            int[] ys = new int[nBins];
+            for (int i = 0; i < nBins; i++) {
+                xs[i] = binCenterX(i, plotWidth, nBins);
+                ys[i] = MARGIN_TOP + plotHeight - (int) Math.round(counts[i] * yScale);
+            }
+            g2.drawPolyline(xs, ys, nBins);
+
+            if (markers) {
+                for (int i = 0; i < nBins; i++) {
+
+                    // An empty bin gets no dot. A run of them along the baseline would read as
+                    // data rather than as the absence of it.
+                    if (counts[i] > 0.0) {
+                        g2.fillOval(xs[i] - 2, ys[i] - 2, 5, 5);
+                    }
+                }
+            }
+        }
+
         @Override
         protected void paintComponent(Graphics g) {
             super.paintComponent(g);
@@ -520,19 +741,29 @@ public class smFRETTraceHistogram implements Command {
             }
 
             int nBins = result.counts.length;
-            double yScale = (result.maxCount > 0) ? ((double) plotHeight / (double) result.maxCount) : 0.0;
 
-            // Bars.
-            g2.setColor(new Color(70, 115, 175));
-            for (int i = 0; i < nBins; i++) {
-                if (result.counts[i] == 0) {
-                    continue;
+            // The overlay is scaled by the curves actually drawn rather than by the pool, which
+            // is what keeps a file's curve the same height whether two files are ticked or
+            // twenty - see computeOverlay for why the reference behind them is the mean.
+            int yTop = overlaying() ? overlayMax : result.maxCount;
+            double yScale = (yTop > 0) ? ((double) plotHeight / (double) yTop) : 0.0;
+
+            if (overlaying()) {
+                drawOverlay(g2, plotWidth, plotHeight, nBins, yScale);
+            } else {
+
+                // Bars.
+                g2.setColor(new Color(70, 115, 175));
+                for (int i = 0; i < nBins; i++) {
+                    if (result.counts[i] == 0) {
+                        continue;
+                    }
+                    int x0 = MARGIN_LEFT + (int) Math.round((double) i * plotWidth / nBins);
+                    int x1 = MARGIN_LEFT + (int) Math.round((double) (i + 1) * plotWidth / nBins);
+                    int h = (int) Math.round(result.counts[i] * yScale);
+                    int barWidth = Math.max(1, x1 - x0 - 1);
+                    g2.fillRect(x0, MARGIN_TOP + plotHeight - h, barWidth, h);
                 }
-                int x0 = MARGIN_LEFT + (int) Math.round((double) i * plotWidth / nBins);
-                int x1 = MARGIN_LEFT + (int) Math.round((double) (i + 1) * plotWidth / nBins);
-                int h = (int) Math.round(result.counts[i] * yScale);
-                int barWidth = Math.max(1, x1 - x0 - 1);
-                g2.fillRect(x0, MARGIN_TOP + plotHeight - h, barWidth, h);
             }
 
             // Axes.
@@ -572,7 +803,7 @@ public class smFRETTraceHistogram implements Command {
                 double frac = i / 4.0;
                 int y = MARGIN_TOP + plotHeight - (int) Math.round(frac * plotHeight);
                 g2.drawLine(MARGIN_LEFT - 4, y, MARGIN_LEFT, y);
-                String label = Integer.toString((int) Math.round(frac * result.maxCount));
+                String label = Integer.toString((int) Math.round(frac * yTop));
                 g2.drawString(label, MARGIN_LEFT - 8 - fm.stringWidth(label), y + fm.getAscent() / 2 - 1);
             }
 
@@ -1012,12 +1243,25 @@ public class smFRETTraceHistogram implements Command {
 
         final int nFrames;
         final float[][] source;
+
+        // Where each ticked file's traces start in the matrices above, in the order they were
+        // concatenated. A file is therefore a contiguous run of spots, which is what lets the
+        // overlay bin one file at a time without copying anything - see traceValues.
+        final int[] starts;
         final float[][] target;
 
-        Combined(float[][] target, float[][] source, int nFrames) {
+        Combined(float[][] target, float[][] source, int nFrames, int[] starts) {
             this.nFrames = nFrames;
             this.source = source;
+            this.starts = starts;
             this.target = target;
+        }
+
+        /** The [from, to) spots of the i'th ticked file. */
+        int[] span(int index) {
+            int from = starts[index];
+            int to = ((index + 1) < starts.length) ? starts[index + 1] : nSpots();
+            return new int[] {from, to};
         }
 
         int nSpots() {
@@ -1032,25 +1276,30 @@ public class smFRETTraceHistogram implements Command {
      * is the whole of what issue #22 asked for - can be tested without an H5 file or a window.
      */
     static Combined combine(java.util.List<TraceFile> files) {
+        int included = 0;
         int nSpots = 0;
         int nFrames = Integer.MAX_VALUE;
         for (TraceFile traces : files) {
             if (traces.included) {
+                included += 1;
                 nSpots += traces.spots();
                 nFrames = Math.min(nFrames, traces.frames());
             }
         }
         if (nSpots == 0) {
-            return new Combined(new float[0][], new float[0][], 0);
+            return new Combined(new float[0][], new float[0][], 0, new int[0]);
         }
 
         float[][] target = new float[nSpots][];
         float[][] source = new float[nSpots][];
+        int[] starts = new int[included];
+        int file = 0;
         int at = 0;
         for (TraceFile traces : files) {
             if (!traces.included) {
                 continue;
             }
+            starts[file++] = at;
 
             // The rows are shared rather than copied. Nothing downstream writes to a trace - the
             // corrections are applied to each value as it is read - so copying would double what
@@ -1061,7 +1310,7 @@ public class smFRETTraceHistogram implements Command {
                 at += 1;
             }
         }
-        return new Combined(target, source, nFrames);
+        return new Combined(target, source, nFrames, starts);
     }
 
     /**
@@ -1181,6 +1430,7 @@ public class smFRETTraceHistogram implements Command {
         sourceTraces = combined.source;
         nSpots = combined.nSpots();
         nFrames = combined.nFrames;
+        spans = combined;
         computeFilterBounds(corrections());
     }
 
@@ -1301,8 +1551,26 @@ public class smFRETTraceHistogram implements Command {
             onPoolChanged();
         });
 
+        // The colour this file is drawn in when overlaid, so the pool list is the legend. A
+        // legend box would be another thing wanting space in a window that is mostly plot, and it
+        // would repeat a list of names that is already on screen.
+        //
+        // Always present rather than added and removed with the checkbox, so ticking Overlay does
+        // not shift every name sideways; it is simply blank when nothing is being coloured.
+        JLabel swatch = new JLabel(" ");
+        swatch.setOpaque(true);
+        swatch.setPreferredSize(new Dimension(10, 10));
+        swatch.setBackground(overlaying() && traces.included
+                ? fileColor(pool.indexOf(traces)) : Color.WHITE);
+
+        JPanel swatchHolder = new JPanel(new GridBagLayout());
+        swatchHolder.setBackground(Color.WHITE);
+        swatchHolder.setBorder(new EmptyBorder(0, 2, 0, 0));
+        swatchHolder.add(swatch);
+
         JPanel row = new JPanel(new BorderLayout(2, 0));
         row.setBackground(Color.WHITE);
+        row.add(swatchHolder, BorderLayout.WEST);
         row.add(tick, BorderLayout.CENTER);
         row.add(remove, BorderLayout.EAST);
 
@@ -1330,6 +1598,10 @@ public class smFRETTraceHistogram implements Command {
         rebuild();
         rescaleSliderRanges();
         retitle();
+
+        // The swatches follow what is ticked, since an unticked file is not being drawn in any
+        // colour and a swatch beside it would be pointing at a line that is not there.
+        refreshPoolPanel();
         update();
     }
 
@@ -1529,9 +1801,32 @@ public class smFRETTraceHistogram implements Command {
             // Written even when they are all zero, so that a saved histogram says what was done
             // to the traces rather than leaving it to be inferred from the absence of a line.
             writer.println("# corrections: " + corrections().describe());
-            writer.println("bin_center,count");
-            for (int i = 0; i < result.counts.length; i++) {
-                writer.println((result.lo + (i + 0.5) * result.binWidth) + "," + result.counts[i]);
+
+            // A saved CSV is the plot that is on screen, so the overlay saves the per file
+            // columns it is showing rather than the pooled total it is not. The total is still
+            // recoverable - with raw counts the file columns sum to it - which is why there is no
+            // column for it and no column for the mean.
+            if (overlaying() && (fileResults != null)) {
+                StringBuilder header = new StringBuilder("bin_center");
+                for (TraceFile traces : includedFiles()) {
+                    header.append(',').append(traces.name());
+                }
+                writer.println(header);
+
+                for (int i = 0; i < result.counts.length; i++) {
+                    StringBuilder row = new StringBuilder();
+                    row.append(result.lo + (i + 0.5) * result.binWidth);
+                    for (Histogram each : fileResults) {
+                        row.append(',').append(each.counts[i]);
+                    }
+                    writer.println(row);
+                }
+            } else {
+                writer.println("bin_center,count");
+                for (int i = 0; i < result.counts.length; i++) {
+                    writer.println((result.lo + (i + 0.5) * result.binWidth) + ","
+                            + result.counts[i]);
+                }
             }
         } catch (Exception e) {
             log.info(e);
@@ -1700,6 +1995,50 @@ public class smFRETTraceHistogram implements Command {
     }
 
     /**
+     * The per file curves, when the overlay is on.
+     *
+     * Every file is binned into the bins the pooled histogram already chose - passing its lo and
+     * its top edge rather than letting each file auto range itself, which would put the curves on
+     * different axes and make comparing them a comparison of two different pictures.
+     */
+    private void computeOverlay(int type, int firstFrame, int lastFrame, Filters filters,
+                                int nBins, Corrections corrections) {
+        java.util.List<TraceFile> included = includedFiles();
+        if (!overlaying() || (spans == null) || included.isEmpty()) {
+            fileResults = null;
+            meanCounts = null;
+            overlayMax = 0;
+            return;
+        }
+
+        double hi = result.lo + result.binWidth * nBins;
+        Histogram[] each = new Histogram[included.size()];
+        for (int f = 0; f < each.length; f++) {
+            int[] span = spans.span(f);
+            each[f] = bin(traceValues(type, firstFrame, lastFrame, filters, corrections,
+                    span[0], span[1]), type, nBins, result.lo, hi);
+        }
+
+        fileResults = each;
+
+        // With one file the mean is that file, so drawing it would put a grey line exactly under
+        // the coloured one and say nothing.
+        meanCounts = (each.length > 1) ? meanCounts(each, nBins) : null;
+
+        // The axis is set by the curves actually drawn, which is what keeps a file's curve the
+        // same height whether two files are ticked or twenty.
+        overlayMax = 0;
+        for (Histogram hist : each) {
+            overlayMax = Math.max(overlayMax, hist.maxCount);
+        }
+    }
+
+    /** Whether the plot is per file rather than pooled. */
+    private boolean overlaying() {
+        return (overlayBox != null) && overlayBox.isSelected();
+    }
+
+    /**
      * Recompute the histogram and redraw. Called whenever a control changes.
      */
     private void update() {
@@ -1708,12 +2047,17 @@ public class smFRETTraceHistogram implements Command {
         }
 
         Corrections corrections = corrections();
-        result = computeHistogram(selectedType(),
-                frameRangeSlider.getLow(),
-                frameRangeSlider.getHigh(),
-                filters(),
-                binsSlider.getValue(),
-                corrections);
+        int type = selectedType();
+        int nBins = binsSlider.getValue();
+        Filters filters = filters();
+        int firstFrame = frameRangeSlider.getLow();
+        int lastFrame = frameRangeSlider.getHigh();
+
+        // The pooled histogram first even when overlaying, because it is what fixes the bins the
+        // per file curves are dropped into - and because the status line is about the pool
+        // whichever way the plot is drawn.
+        result = computeHistogram(type, firstFrame, lastFrame, filters, nBins, corrections);
+        computeOverlay(type, firstFrame, lastFrame, filters, nBins, corrections);
 
         // The file count only when there is more than one, so a single file reads exactly as it
         // did before the pool existed.
@@ -1780,6 +2124,19 @@ public class smFRETTraceHistogram implements Command {
         // The pool lives in its own column down the left (issue #22), so the top of the window
         // is the histogram type on its own.
         JComponent poolColumn = buildPoolPanel();
+
+        // Pooled or per file. On the type row because it is the same kind of choice - what is
+        // being plotted - and because the two are read together.
+        overlayBox = new JCheckBox("Overlay files", false);
+        overlayBox.setToolTipText("<html>Plot each ticked file as its own line instead of one"
+                + " pooled histogram.<br>The grey line behind them is the mean of the files."
+                + "<br>Colours match the swatches in the file list.</html>");
+        overlayBox.addActionListener(e -> {
+            refreshPoolPanel();
+            update();
+        });
+        typePanel.add(Box.createHorizontalStrut(10));
+        typePanel.add(overlayBox);
 
         JPanel topPanel = new JPanel();
         topPanel.setLayout(new BoxLayout(topPanel, BoxLayout.Y_AXIS));
@@ -1881,6 +2238,12 @@ public class smFRETTraceHistogram implements Command {
         update();
 
         frame.pack();
+
+        // No narrower than it packs to. Every control row here is horizontal, and the type row -
+        // four radio buttons and the overlay box - is a FlowLayout inside a BoxLayout, which
+        // clips rather than wrapping when it runs out of width. A control that is off the edge of
+        // the window is worse than one the window refuses to hide.
+        frame.setMinimumSize(new Dimension(frame.getWidth(), Math.min(frame.getHeight(), 420)));
         frame.setLocationRelativeTo(null);
         frame.setVisible(true);
     }

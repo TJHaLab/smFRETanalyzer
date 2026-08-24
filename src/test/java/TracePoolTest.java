@@ -1,3 +1,4 @@
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -245,6 +246,116 @@ class TracePoolTest {
         smFRETAnalysisException thrown = assertThrows(smFRETAnalysisException.class,
                 () -> plugin.loadTraces(bad));
         assertTrue(thrown.getMessage().contains("notes.h5"), thrown.getMessage());
+    }
+
+    /**
+     * The overlaid per file curves land on the same bins as the pooled histogram, and add up to
+     * it.
+     *
+     * Both halves matter and they are the same fact. Sharing the bins is what makes the curves
+     * comparable at all - auto ranging each file separately would draw six pictures on six axes
+     * and lay them on top of each other. Adding up to the pooled counts is the check that the
+     * split changed nothing: the same traces, the same filters, the same arithmetic, just
+     * counted in groups. It is also what lets the saved CSV omit a total column.
+     */
+    @Test
+    @DisplayName("per file curves share the pooled bins and sum to the pooled counts")
+    void perFileCurvesShareTheBins(@TempDir File directory) {
+        smFRETTraceHistogram plugin = histogram();
+        plugin.addTraceFiles(Arrays.asList(writeH5(directory, "a.h5", 7, 10),
+                writeH5(directory, "b.h5", 4, 10),
+                writeH5(directory, "c.h5", 5, 10)));
+
+        int bins = 8;
+        int type = smFRETTraceHistogram.TYPE_DONOR;
+        smFRETTraceHistogram.Corrections none = new smFRETTraceHistogram.Corrections(0, 0, 0);
+        smFRETTraceHistogram.Filters open = smFRETTraceHistogram.Filters.none();
+
+        smFRETTraceHistogram.Histogram pooled =
+                plugin.computeHistogram(type, 1, 10, open, bins, none);
+        double hi = pooled.lo + pooled.binWidth * bins;
+
+        smFRETTraceHistogram.Combined combined = smFRETTraceHistogram.combine(plugin.pool);
+        int[] summed = new int[bins];
+        smFRETTraceHistogram.Histogram[] each = new smFRETTraceHistogram.Histogram[3];
+
+        for (int f = 0; f < 3; f++) {
+            int[] span = combined.span(f);
+            each[f] = smFRETTraceHistogram.bin(
+                    plugin.traceValues(type, 1, 10, open, none, span[0], span[1]),
+                    type, bins, pooled.lo, hi);
+
+            assertEquals(pooled.lo, each[f].lo, 1.0e-12, "file " + f + " is on its own axis");
+            assertEquals(pooled.binWidth, each[f].binWidth, 1.0e-12,
+                    "file " + f + " has its own bin width");
+            for (int i = 0; i < bins; i++) {
+                summed[i] += each[f].counts[i];
+            }
+        }
+        assertArrayEquals(pooled.counts, summed,
+                "the files should account for every pooled trace and no more");
+
+        // And the spans really are the files, in pool order.
+        assertEquals(7, combined.span(0)[1] - combined.span(0)[0]);
+        assertEquals(4, combined.span(1)[1] - combined.span(1)[0]);
+        assertEquals(5, combined.span(2)[1] - combined.span(2)[0]);
+    }
+
+    /**
+     * The grey reference is the mean of the files, not their sum.
+     *
+     * The sum is the pooled histogram, which is what the unticked box already draws - and it
+     * lives on a scale N times the files', so using it would push every curve into the bottom of
+     * the plot and defeat the overlay at exactly the point where overlaying starts to be worth
+     * doing. The mean sits among the curves on their own scale.
+     */
+    @Test
+    @DisplayName("the reference curve is the mean of the files, not the sum")
+    void theReferenceIsTheMean() {
+        smFRETTraceHistogram.Histogram one = new smFRETTraceHistogram.Histogram();
+        one.counts = new int[] {4, 0, 2};
+        smFRETTraceHistogram.Histogram two = new smFRETTraceHistogram.Histogram();
+        two.counts = new int[] {0, 6, 4};
+
+        double[] mean = smFRETTraceHistogram.meanCounts(
+                new smFRETTraceHistogram.Histogram[] {one, two}, 3);
+
+        assertArrayEquals(new double[] {2.0, 3.0, 3.0}, mean, 1.0e-12);
+
+        // Never above the tallest file, which is what keeps it inside an axis scaled to them.
+        for (int i = 0; i < 3; i++) {
+            assertTrue(mean[i] <= Math.max(one.counts[i], two.counts[i]),
+                    "the mean should sit among the files, not above them");
+        }
+    }
+
+    /**
+     * A file's colour is keyed to its place in the pool, not among the ticked files.
+     *
+     * Untick one file and the rest have to keep their colours: the whole use of the tick boxes is
+     * comparing what is on screen before and after, and recolouring everything at the moment of
+     * comparison would throw away what was being compared.
+     */
+    @Test
+    @DisplayName("colours are keyed to the pool, so ticking does not reshuffle them")
+    void coloursFollowThePool(@TempDir File directory) {
+        smFRETTraceHistogram plugin = histogram();
+        plugin.addTraceFiles(Arrays.asList(writeH5(directory, "a.h5", 2, 10),
+                writeH5(directory, "b.h5", 2, 10), writeH5(directory, "c.h5", 2, 10)));
+
+        java.awt.Color before = smFRETTraceHistogram.fileColor(plugin.pool.indexOf(
+                plugin.pool.get(2)));
+
+        plugin.pool.get(0).included = false;
+        plugin.rebuild();
+
+        assertEquals(1, plugin.includedFiles().indexOf(plugin.pool.get(2)),
+                "the fixture should have moved it among the ticked files");
+        assertEquals(before, smFRETTraceHistogram.fileColor(plugin.pool.indexOf(
+                plugin.pool.get(2))), "but its colour should not have moved");
+
+        // And the palette cycles rather than running off its end on a big pool.
+        assertEquals(smFRETTraceHistogram.fileColor(0), smFRETTraceHistogram.fileColor(8));
     }
 
     /**
