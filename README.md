@@ -104,16 +104,32 @@ This plugin measures the FRET time traces for each of the spots in the FRET imag
 
 This plugin plots histograms of the time traces measured by smFRETAnalyzer. Each trace contributes a single point, the average of that trace over the selected frame interval, so there is one entry per molecule rather than one per frame. Like smFRETSpotFinder its window stays open, but it goes further: the histogram is recomputed as the controls are adjusted rather than on a button press, so the interval and the intensity threshold can be chosen by eye.
 
+Several movies can be pooled into one histogram. The dialog asks for one .h5 to start with and the rest are added in the window itself, so a folder of repeats becomes a single distribution rather than a stack of windows to compare by eye.
+
 #### Parameters:
 
-* Trace H5 file - The .h5 file written by smFRETAnalyzer.
+* Trace H5 file - The .h5 file written by smFRETAnalyzer. This is the file the pool starts with, not the only one it can hold; more are added in the window.
 
 #### Controls:
 
+* Trace files - The pool, down the left hand side. Drop .h5 files anywhere on this panel to add them, or use 'Add...'. Each file has a tick box that takes it in or out of the histogram without taking it out of the pool, which is how to ask whether one movie is dragging the distribution - untick it, look, tick it back. The × beside a file removes it; the last one cannot be removed, since unticking already covers wanting it out of the plot. Files are listed in name order however they were added, and the tooltip on each gives its full path, trace count and frame count.
+
+  **The frame range is the shortest ticked file's.** One frame slider governs every trace, so the pool can only span the frames they all have; the surplus frames of a longer movie are not looked at. Untick the short file and the range grows back. Nothing is resampled or padded.
+
 * Histogram - Which quantity to histogram: FRET efficiency, donor/target intensity, acceptor/source intensity, or total intensity. The FRET efficiency is calculated from the interval averaged intensities as mean(acceptor) / (mean(donor) + mean(acceptor)). Note that this is not the same as averaging the per frame ratios - on the example data the two differ by about 0.2 in the mean.
+* Overlay files - Plot each ticked file as its own line instead of one pooled histogram. Lines and points rather than bars, because a dozen files drawn as bars would be a dozen slivers per bin, too narrow to have a shape - and the shape is what is being compared. Colours match the swatches in the file list, which is the legend; a file keeps its colour as others are ticked in and out, so the comparison survives being made. Markers are dropped above 60 bins, where a dot per bin hides the line it marks.
+
+  Every file is binned into **the same bins**, fixed from all the ticked files together. The intensity histograms are auto-ranged, so without this each file would be drawn on its own axis and laying them on top of each other would compare two different pictures.
+
+  Rest the pointer on a file in the list and its curve is highlighted - drawn heavier and on top, with the other files faded back so it can be found in a crowded bundle. The mean stays prominent, since "this file against the average" is the comparison being made. It appears on the same delay as the tooltip, so running the pointer down the list on the way to somewhere else does not strobe the plot, and it goes as soon as the pointer leaves the row.
+
+  The y axis is **counts per file**, not the pooled total, so a file's curve is the same height whether two files are ticked or twenty. The heavy grey line is the **mean** of the ticked files, drawn last so it sits on top of them and labelled at the top right - it is the curve all the others are read against, so it is the one that must not be the one hidden. It is not the pooled total: that is the sum, which lives on a scale N times the files' and would squeeze every curve into the bottom of the plot at exactly the point where overlaying starts to be worth doing. Because the counts are raw, the file curves do add up to the pooled histogram - untick the box to see it.
+
 * Bins - The number of histogram bins.
 * First frame / Last frame - The range of slices/frames each trace is averaged over. Drag either end to resize the interval or the middle to slide it, and click the slider then use the keys for anything the mouse cannot reach: a track a few hundred pixels wide cannot address every frame of a long movie. Left and right move the interval by one step, **Page Up and Page Down move it a whole interval** so successive presses tile the movie without overlapping, Home and End jump to the start or the end keeping the width, and up and down resize it. The tooltip lists them. The same keys work on the Range slider below.
-* Range - Minimum and maximum intensity, applied to whichever quantity is chosen in the adjacent drop down: total (donor + acceptor), donor/target, or acceptor/source. These are mutually exclusive, so switching rescales the slider to the range of the newly selected quantity and reopens it fully. Both ends are an all-frames test - a trace is dropped entirely if *any* frame in the interval falls outside the range, so a molecule that bleaches part way through contributes nothing rather than a diluted average. The maximum works the same way, which makes it strict on purpose: one bright frame is enough to drop a trace, which is what catches an aggregate, but it also means a single spike will do it.
+* Donor (target) / Acceptor (source) / Total (D+A) - Minimum and maximum intensity on each of the three quantities, all three live at once and all three applied. Each is scaled to its own range and starts fully open, so an untouched slider excludes nothing. Both ends are an all-frames test - a trace is dropped entirely if *any* frame in the interval falls outside the range, so a molecule that bleaches part way through contributes nothing rather than a diluted average. The maximum works the same way, which makes it strict on purpose: one bright frame is enough to drop a trace, which is what catches an aggregate, but it also means a single spike will do it. The status line reports how many traces each range rejected, counted separately - a trace failing two of them is counted against both, which is what says whether opening one alone would bring anything back. If the three together keep nothing, the plot says which one is responsible rather than showing empty axes.
+
+  Ticking a file in or out **keeps the limits you set** rather than resetting them, so the comparison is at fixed filters. A handle still sitting at its limit is the exception: that is the slider saying 'no limit' rather than a number you chose, so it follows the new limit instead of staying behind.
 * Baseline donor / Baseline acceptor - A constant offset removed from every frame of that channel, in the same units as the traces. The value is **subtracted**, so enter a negative number to add one. Use these when a channel does not sit at zero where it should - the level a photobleached or unilluminated trace settles at, for instance.
 * Donor leakage - The fraction of the donor signal that appears in the acceptor channel, usually measured on a donor only sample. It is taken off the acceptor using the *baseline corrected* donor, `acceptor - leakage * donor`, since leakage is a fraction of real donor emission and a residual offset is not. Setting it to 1 is a useful check: the Total histogram then collapses onto the raw acceptor, because the donor cancels out of the sum exactly.
 
@@ -125,8 +141,10 @@ FRET efficiency is plotted over a fixed range of -0.2 to 1.2 so that the noise e
 
 Nothing is written unless you ask for it:
 
-* <image_name>_histogram.csv - The bin centers and counts of the displayed histogram, via 'Save CSV'.
+* <image_name>_histogram.csv - The bin centers and counts of the displayed histogram, via 'Save CSV'. The header names every ticked file with its own trace count, which is the only record of what went into a pooled histogram. With 'Overlay files' ticked it is one column per file instead, matching what is on screen; there is no column for the total or the mean, since the file columns sum to the one and average to the other.
 * <image_name>_histogram.png - The displayed plot, titled with the H5 file name so that a saved plot can be identified on its own, via 'Save PNG'.
+
+With several files ticked both are offered as `<first_image_name>_pool_histogram.*` instead, named after the first file rather than after all of them - the alternative is a file name that grows with the pool, and the files that went in are in the CSV header where they can be read without being in the name.
 
 ### smFRETTraceVisualizer
 

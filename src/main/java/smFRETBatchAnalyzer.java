@@ -626,8 +626,7 @@ public class smFRETBatchAnalyzer implements Command {
             settings = null;
             templateFile = null;
             settingsLabel.setForeground(PROBLEM_COLOR);
-            settingsLabel.setText(wrapped("<b>" + escaped(chosen.getName()) + "</b><br>"
-                    + breakable(escaped(String.valueOf(e.getMessage())))));
+            settingsLabel.setText(settingsLine(chosen, String.valueOf(e.getMessage())));
             settingsLabel.setToolTipText(e.getMessage());
             setStatus(e.getMessage());
             updateReadiness();
@@ -638,20 +637,16 @@ public class smFRETBatchAnalyzer implements Command {
         String problem = settings.problem();
         if (problem != null) {
             settingsLabel.setForeground(PROBLEM_COLOR);
-
-            // The name on its own line, then the sentence. The path is the middle of that
-            // sentence and is the part being reported, so it is also the part that must not be
-            // what a narrow window drops.
-            settingsLabel.setText(wrapped("<b>" + escaped(chosen.getName()) + "</b><br>"
-                    + breakable(escaped(problem))));
-            settingsLabel.setToolTipText(wrapped(escaped(problem)));
+            settingsLabel.setText(settingsLine(chosen, problem));
+            settingsLabel.setToolTipText(smFRETSwing.dialogMessage(problem));
         } else {
             settingsLabel.setForeground(Color.DARK_GRAY);
-            settingsLabel.setText(wrapped("<b>" + escaped(chosen.getName()) + "</b> · "
-                    + escaped(settings.describe()) + "<br>mapping "
-                    + escaped(settings.mappingFile.getName())));
-            settingsLabel.setToolTipText(wrapped(escaped(chosen.getAbsolutePath()) + "<br>"
-                    + escaped(settings.describe())));
+            settingsLabel.setText(smFRETSwing.wrapped(
+                    "<b>" + smFRETSwing.escaped(chosen.getName()) + "</b> · "
+                            + smFRETSwing.escaped(settings.describe()) + "<br>mapping "
+                            + smFRETSwing.escaped(settings.mappingFile.getName())));
+            settingsLabel.setToolTipText(smFRETSwing.dialogMessage(
+                    chosen.getAbsolutePath() + "\n" + settings.describe()));
         }
         setStatus(" ");
         updateReadiness();
@@ -716,8 +711,8 @@ public class smFRETBatchAnalyzer implements Command {
 
         String problem = settings.problem();
         if (problem != null) {
-            JOptionPane.showMessageDialog(ownerWindow(), problem, WINDOW_TITLE,
-                    JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(ownerWindow(), smFRETSwing.dialogMessage(problem),
+                    WINDOW_TITLE, JOptionPane.ERROR_MESSAGE);
             return;
         }
 
@@ -771,41 +766,15 @@ public class smFRETBatchAnalyzer implements Command {
     }
 
     /**
-     * Lay text out as HTML so that a JLabel wraps it instead of clipping it.
+     * The settings line for something that went wrong: the file on its own line, then why.
      *
-     * A JLabel given plain text draws one line and truncates it to an ellipsis. That is survivable
-     * for a status line and not for this one, which reports a path: the path sits in the middle of
-     * the sentence, so the clipped half is the half naming the file the user has to go and find.
-     * HTML text is laid out to the width the label was given and reflows when the window resizes.
+     * The name goes first and alone because it is the short half. What follows names a *path*, and
+     * the path sits in the middle of the sentence - so it is the part a narrow window would drop,
+     * and it is the part the user has to act on.
      */
-    static String wrapped(String body) {
-        return "<html>" + body + "</html>";
-    }
-
-    /**
-     * Escape text being put into one of those labels.
-     *
-     * File names and paths are user data, and one containing an ampersand or an angle bracket
-     * would otherwise be swallowed by the HTML parser - so the message reporting a file would
-     * mangle exactly the names most likely to have been chosen badly in the first place.
-     */
-    static String escaped(String text) {
-        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
-    }
-
-    /**
-     * Give a long path somewhere to break.
-     *
-     * A path contains no spaces, so the line breaker has nowhere legal to break it: the label
-     * clips it instead, and its minimum width becomes the width of the whole path - so a narrow
-     * window gets a message running off its own right edge rather than a wrapped one. A zero width
-     * space after each separator is a break opportunity that adds no visible character, so the
-     * path still reads as a path and can still be copied out of the tooltip unchanged.
-     *
-     * Only separators, so ordinary prose is untouched.
-     */
-    static String breakable(String text) {
-        return text.replace("/", "/\u200b").replace("\\", "\\\u200b");
+    private static String settingsLine(File chosen, String detail) {
+        return smFRETSwing.wrapped("<b>" + smFRETSwing.escaped(chosen.getName()) + "</b><br>"
+                + smFRETSwing.breakable(smFRETSwing.escaped(detail)));
     }
 
     private int backgroundFrames() {

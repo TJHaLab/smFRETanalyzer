@@ -21,6 +21,60 @@ final class smFRETSwing {
     private smFRETSwing() {
     }
 
+    // What a wrapped message dialog is laid out to. Wide enough for a sentence, narrow enough
+    // that the dialog stays a dialog.
+    private static final int DIALOG_WIDTH = 460;
+
+    /**
+     * Lay text out as HTML so that a JLabel wraps it instead of clipping it.
+     *
+     * A JLabel given plain text draws one line and truncates it to an ellipsis. That is survivable
+     * for a status line and not for a message that reports a path: the path sits in the middle of
+     * the sentence, so the clipped half is the half naming the file the user has to go and find.
+     * HTML text is laid out to the width the label was given and reflows when the window resizes.
+     */
+    static String wrapped(String body) {
+        return "<html>" + body + "</html>";
+    }
+
+    /**
+     * Escape text going into one of those labels.
+     *
+     * File names and paths are user data, and one containing an ampersand or an angle bracket
+     * would otherwise be swallowed by the HTML parser - so the message reporting a file would
+     * mangle exactly the names most likely to have been chosen badly in the first place.
+     */
+    static String escaped(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    /**
+     * Give a long path somewhere to break.
+     *
+     * A path contains no spaces, so the line breaker has nowhere legal to break it: the label
+     * clips it instead, and its minimum width becomes the width of the whole path - so a narrow
+     * window gets a message running off its own right edge rather than a wrapped one. A zero width
+     * space after each separator is a break opportunity that adds no visible character, so the
+     * path still reads as a path and can still be copied out of the tooltip unchanged.
+     *
+     * Only separators, so ordinary prose is untouched.
+     */
+    static String breakable(String text) {
+        return text.replace("/", "/\u200b").replace("\\", "\\\u200b");
+    }
+
+    /**
+     * A message for JOptionPane, wrapped rather than laid out as one enormous line.
+     *
+     * JOptionPane sizes itself to its longest line, so a plain message naming a path gives a
+     * dialog wider than the screen - and these messages name paths, because naming the file is
+     * the whole of what they are for. Newlines are kept as line breaks.
+     */
+    static String dialogMessage(String text) {
+        return "<html><body style='width:" + DIALOG_WIDTH + "px'>"
+                + breakable(escaped(text)).replace("\n", "<br>") + "</body></html>";
+    }
+
     /**
      * A handler that accepts dropped files, for a panel that always wants them.
      */
