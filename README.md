@@ -175,6 +175,7 @@ This is **a normal ImageJ image window**, not a panel of the plugin's own, so al
 
   One range serves both panels, every spot and every frame, so brightness still means the same thing between the channels, along the movie and from one spot to the next - which is what keeps bleaching and FRET anticorrelation visible rather than normalized away. At the default stretch the core of a bright spot saturates (about 20-30% of the donor crop, 4-7% of the acceptor, and nothing at all clipped to black), which is what makes the spot obvious; pull the white point up if you want to see structure inside it.
 * The frame slider and the buttons that step through the spots sit at the bottom.
+* **Up and down step through the spots**, from either window - including the field, which is where you are when you have just clicked a spot and want the next one. The buttons say so in their tooltips. Left and right belong to the frame slider once it has focus, so the two pairs divide up as frames on the horizontal and spots on the vertical; the slider gives up its own up and down for this, so the spot keys work wherever the focus happens to be.
 
 The divider between the traces and the images can be dragged. Making the window taller gives the extra height to the traces, since the images are square and stop gaining from it.
 
