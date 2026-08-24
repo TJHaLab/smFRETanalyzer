@@ -362,6 +362,7 @@ public class smFRETTraceVisualizer implements Command {
                     selectNearest(canvas.offScreenXD(e.getX()), canvas.offScreenYD(e.getY()));
                 }
             });
+            bindSpotKeys(canvas);
         }
         // Brightness/Contrast changes the display range and then calls updateAndDraw, which is
         // what notifies listeners - there is no display range event of its own to listen for.
@@ -387,6 +388,7 @@ public class smFRETTraceVisualizer implements Command {
         syncZoomRange();
 
         if (fieldWindow.getWindow() != null) {
+            bindSpotKeys(fieldWindow.getWindow());
             fieldWindow.getWindow().addWindowListener(new WindowAdapter() {
                 @Override
                 public void windowClosed(WindowEvent e) {
@@ -749,9 +751,23 @@ public class smFRETTraceVisualizer implements Command {
         frameSlider.addChangeListener(e -> setFrame(frameSlider.getValue()));
 
         JButton previousSpot = new JButton("< spot");
+        previousSpot.setToolTipText("Previous spot (Up arrow)");
         previousSpot.addActionListener(e -> selectSpot(selectedSpot - 1));
         JButton nextSpot = new JButton("spot >");
+        nextSpot.setToolTipText("Next spot (Down arrow)");
         nextSpot.addActionListener(e -> selectSpot(selectedSpot + 1));
+
+        // The frame slider keeps the horizontal pair and gives up the vertical one. A JSlider
+        // binds all four arrows when it has focus, and it takes focus on a click, so whichever
+        // pair stepped spots would work until the slider was touched and then quietly stop -
+        // which is worse than no shortcut at all. Naming an action that is not in the action map
+        // is how a key is un-bound: the lookup fails, the slider does not consume it, and it
+        // reaches the window binding below.
+        frameSlider.setToolTipText("Frame. Left and right step one frame, up and down step spots.");
+        for (int code : new int[] {KeyEvent.VK_UP, KeyEvent.VK_DOWN}) {
+            frameSlider.getInputMap(JComponent.WHEN_FOCUSED)
+                    .put(KeyStroke.getKeyStroke(code, 0), "none");
+        }
 
         JPanel controls = new JPanel(new BorderLayout(8, 0));
         controls.setBorder(new EmptyBorder(2, 10, 6, 10));
@@ -770,6 +786,15 @@ public class smFRETTraceVisualizer implements Command {
         JPanel traceContent = new JPanel(new BorderLayout());
         traceContent.add(split, BorderLayout.CENTER);
         traceContent.add(controls, BorderLayout.SOUTH);
+
+        // WHEN_IN_FOCUSED_WINDOW, so stepping spots does not depend on which panel was last
+        // clicked - the traces, the two zoom panels and the slider are all read together and
+        // none of them is the obvious place for the focus to be.
+        InputMap keys = traceContent.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
+        keys.put(KeyStroke.getKeyStroke(KeyEvent.VK_UP, 0), "previousSpot");
+        keys.put(KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0), "nextSpot");
+        traceContent.getActionMap().put("previousSpot", spotStep(-1));
+        traceContent.getActionMap().put("nextSpot", spotStep(1));
 
         traceFrame = frame("smFRET traces - " + name, traceContent);
 
@@ -800,6 +825,48 @@ public class smFRETTraceVisualizer implements Command {
         if (nSpots > 0) {
             selectSpot(0);
         }
+    }
+
+    /**
+     * Step the selection by one spot, as an Action for the key bindings.
+     *
+     * Up is the previous spot and down the next, the way a list moves rather than the way the
+     * buttons are laid out - the buttons read "&lt; spot" and "spot &gt;" because they sit side by
+     * side, which is a fact about the row they are in and not about the order of the spots.
+     */
+    private Action spotStep(int delta) {
+        return new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                selectSpot(selectedSpot + delta);
+            }
+        };
+    }
+
+    /**
+     * The same two keys in the field window, which is an ImageJ window and has no part in Swing's
+     * key bindings.
+     *
+     * Worth doing rather than leaving to the trace window: picking a spot out of the field is
+     * what that window is for, so it is exactly where the pointer already is when the next thing
+     * wanted is the next spot.
+     */
+    private void bindSpotKeys(Component component) {
+        if (component == null) {
+            return;
+        }
+        component.addKeyListener(new KeyAdapter() {
+            @Override
+            public void keyPressed(KeyEvent e) {
+                if (e.getKeyCode() == KeyEvent.VK_UP) {
+                    selectSpot(selectedSpot - 1);
+                    e.consume();
+                } else if (e.getKeyCode() == KeyEvent.VK_DOWN) {
+                    selectSpot(selectedSpot + 1);
+                    e.consume();
+                }
+            }
+        });
     }
 
     /**
