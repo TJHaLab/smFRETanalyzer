@@ -121,6 +121,8 @@ Several movies can be pooled into one histogram. The dialog asks for one .h5 to 
 
   Every file is binned into **the same bins**, fixed from all the ticked files together. The intensity histograms are auto-ranged, so without this each file would be drawn on its own axis and laying them on top of each other would compare two different pictures.
 
+  Rest the pointer on a file in the list and its curve is highlighted - drawn heavier and on top, with the other files faded back so it can be found in a crowded bundle. The mean stays prominent, since "this file against the average" is the comparison being made. It appears on the same delay as the tooltip, so running the pointer down the list on the way to somewhere else does not strobe the plot, and it goes as soon as the pointer leaves the row.
+
   The y axis is **counts per file**, not the pooled total, so a file's curve is the same height whether two files are ticked or twenty. The heavy grey line is the **mean** of the ticked files, drawn last so it sits on top of them and labelled at the top right - it is the curve all the others are read against, so it is the one that must not be the one hidden. It is not the pooled total: that is the sum, which lives on a scale N times the files' and would squeeze every curve into the bottom of the plot at exactly the point where overlaying starts to be worth doing. Because the counts are raw, the file curves do add up to the pooled histogram - untick the box to see it.
 
 * Bins - The number of histogram bins.

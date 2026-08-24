@@ -359,6 +359,32 @@ class TracePoolTest {
     }
 
     /**
+     * The other files fade toward the page, not toward transparency.
+     *
+     * Alpha is the obvious way to fade a line and the wrong one here: a dozen translucent curves
+     * crossing each other stack, so the plot comes out darkest exactly where it is busiest -
+     * which is the opposite of what dimming them is for, and worst in the crowded plots where
+     * picking one curve out actually matters.
+     */
+    @Test
+    @DisplayName("faded curves are lightened, not made translucent")
+    void fadedCurvesAreLightened() {
+        java.awt.Color strong = new java.awt.Color(0, 114, 178);
+        java.awt.Color pale = smFRETTraceHistogram.faded(strong);
+
+        assertEquals(255, pale.getAlpha(), "fading must not be alpha, or the lines stack");
+        assertTrue(pale.getRed() > strong.getRed(), "should move toward the page");
+        assertTrue(pale.getGreen() > strong.getGreen());
+        assertTrue(pale.getBlue() > strong.getBlue());
+
+        // Still visible rather than gone: the other files are context, not clutter to be removed.
+        assertTrue(pale.getBlue() < 250, "faded to nothing would drop the context: " + pale);
+
+        // White has nowhere to go, and must not overflow the channel trying.
+        assertEquals(java.awt.Color.WHITE, smFRETTraceHistogram.faded(java.awt.Color.WHITE));
+    }
+
+    /**
      * A file that could not be read is reported with its path wrapped, not as one enormous line.
      *
      * JOptionPane sizes itself to its longest line, and these messages name a path because naming

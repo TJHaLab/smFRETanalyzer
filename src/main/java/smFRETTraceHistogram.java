@@ -97,7 +97,12 @@ public class smFRETTraceHistogram implements Command {
     private final RangeSlider[] valueRangeSliders = new RangeSlider[N_FILTERS];
     int nFrames = 0;
     int nSpots = 0;
+    // Which file the pointer has rested on long enough to highlight, and the one it is currently
+    // resting on waiting for that. See beginHover.
+    private TraceFile hovered;
+    private javax.swing.Timer hoverTimer;
     private JCheckBox overlayBox;
+    private TraceFile pendingHover;
 
     // The overlay's per file curves, and the mean of them, or null when the box is unticked.
     // Held rather than recomputed at paint time: the panel repaints on every expose, and these
@@ -497,6 +502,14 @@ public class smFRETTraceHistogram implements Command {
     private static final Color MEAN_COLOR = new Color(130, 130, 130);
     private static final float MEAN_WIDTH = 3.5f;
 
+    // A file's line, and the same line while the pointer is over its row in the pool list.
+    private static final float FILE_WIDTH = 1.6f;
+    private static final float HIGHLIGHT_WIDTH = 3.0f;
+
+    // How far the other files fade while one is highlighted. Enough to read the highlighted one
+    // out of a crowded bundle, not so far that the rest stop being context.
+    private static final double FADE = 0.78;
+
     private static final Color[] FILE_COLORS = {
         new Color(0, 114, 178),     // blue
         new Color(213, 94, 0),      // vermillion
@@ -515,6 +528,21 @@ public class smFRETTraceHistogram implements Command {
      */
     static Color fileColor(int poolIndex) {
         return FILE_COLORS[Math.floorMod(poolIndex, FILE_COLORS.length)];
+    }
+
+    /**
+     * A file's colour, faded toward the page while another file is highlighted.
+     *
+     * Toward white rather than by alpha, which is the obvious way and the wrong one: a dozen
+     * translucent lines crossing each other stack, so the plot comes out darkest exactly where it
+     * is busiest - the opposite of what fading them is for.
+     */
+    static Color faded(Color color) {
+        return new Color(fade(color.getRed()), fade(color.getGreen()), fade(color.getBlue()));
+    }
+
+    private static int fade(int channel) {
+        return (int) Math.round(channel + (255 - channel) * FADE);
     }
 
     /**
@@ -622,29 +650,53 @@ public class smFRETTraceHistogram implements Command {
             // is a solid smear that hides the line it is there to mark.
             boolean markers = nBins <= 60;
 
+            // The file whose row the pointer is resting on, if it is still ticked - it can be
+            // unticked while the highlight is up, and then it has no curve to highlight.
             java.util.List<TraceFile> included = includedFiles();
-            g2.setStroke(new BasicStroke(1.6f));
-            for (int f = 0; f < fileResults.length; f++) {
-                g2.setColor(fileColor(pool.indexOf(included.get(f))));
+            int highlight = (hovered == null) ? -1 : included.indexOf(hovered);
 
-                int[] counts = fileResults[f].counts;
-                double[] asDouble = new double[nBins];
-                for (int i = 0; i < nBins; i++) {
-                    asDouble[i] = counts[i];
+            g2.setStroke(new BasicStroke(FILE_WIDTH));
+            for (int f = 0; f < fileResults.length; f++) {
+
+                // The highlighted one is drawn at the end instead, on top of everything.
+                if (f == highlight) {
+                    continue;
                 }
-                drawCurve(g2, asDouble, plotWidth, plotHeight, nBins, yScale, markers);
+                Color color = fileColor(pool.indexOf(included.get(f)));
+                g2.setColor((highlight >= 0) ? faded(color) : color);
+                drawCurve(g2, countsOf(fileResults[f], nBins), plotWidth, plotHeight, nBins,
+                        yScale, markers);
             }
 
-            // The mean last, so it is on top rather than glimpsed between the files. It is the
-            // one curve every other curve is being read against, so it is the one that must not
-            // be the one hidden - and with six files there is always something drawn over it.
+            // The mean above the files, so it is on top rather than glimpsed between them. It is
+            // the one curve every other curve is being read against, so it is the one that must
+            // not be hidden - and with six files there is always something drawn over it.
             if (meanCounts != null) {
                 g2.setColor(MEAN_COLOR);
                 g2.setStroke(new BasicStroke(MEAN_WIDTH));
                 drawCurve(g2, meanCounts, plotWidth, plotHeight, nBins, yScale, false);
                 drawMeanKey(g2, plotWidth, fileResults.length);
             }
+
+            // And the highlighted file above even that. While the pointer is on its row it is the
+            // thing being asked about, and the mean stays legible either side of wherever the two
+            // coincide - which is the part where there was nothing to tell apart anyway.
+            if (highlight >= 0) {
+                g2.setColor(fileColor(pool.indexOf(included.get(highlight))));
+                g2.setStroke(new BasicStroke(HIGHLIGHT_WIDTH));
+                drawCurve(g2, countsOf(fileResults[highlight], nBins), plotWidth, plotHeight,
+                        nBins, yScale, markers);
+            }
             g2.setStroke(was);
+        }
+
+        /** A histogram's counts as doubles, which is what drawCurve takes. */
+        private double[] countsOf(Histogram hist, int nBins) {
+            double[] out = new double[nBins];
+            for (int i = 0; i < nBins; i++) {
+                out[i] = hist.counts[i];
+            }
+            return out;
         }
 
         /**
@@ -1507,6 +1559,10 @@ public class smFRETTraceHistogram implements Command {
         if (poolPanel == null) {
             return;
         }
+
+        // The rows about to be discarded are the ones the pointer is over, so the mouseExited
+        // that would have cleared this is never coming.
+        endHover();
         poolPanel.removeAll();
         for (TraceFile traces : pool) {
             poolPanel.add(buildPoolRow(traces));
@@ -1578,6 +1634,30 @@ public class smFRETTraceHistogram implements Command {
         // pool makes each name a band the height of the column.
         row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
         row.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        // On every piece of the row, because the tick box and the remove button cover most of it
+        // and an enter on a child is not an enter on its parent.
+        MouseAdapter hover = new MouseAdapter() {
+
+            @Override
+            public void mouseEntered(MouseEvent e) {
+                beginHover(traces);
+            }
+
+            @Override
+            public void mouseExited(MouseEvent e) {
+
+                // Moving from the row onto one of its own children reads as an exit here, so the
+                // pointer has to be outside the row itself before the highlight is dropped.
+                Point at = SwingUtilities.convertPoint(e.getComponent(), e.getPoint(), row);
+                if (!row.contains(at)) {
+                    endHover();
+                }
+            }
+        };
+        for (Component part : new Component[] {row, swatchHolder, swatch, tick, remove}) {
+            part.addMouseListener(hover);
+        }
         return row;
     }
 
@@ -1589,6 +1669,55 @@ public class smFRETTraceHistogram implements Command {
         resetSliderRanges();
         retitle();
         update();
+    }
+
+    /**
+     * The pointer came to rest on a file's row: highlight that file's curve, on a delay.
+     *
+     * The delay is the whole of why this is not just mouseEntered. Running the pointer down the
+     * list to reach the scrollbar passes over every row on the way, and highlighting each in turn
+     * would strobe the plot. It is read from the tooltip's own initial delay rather than picked,
+     * so the highlight and the tooltip arrive together and stay together if that is ever retuned.
+     */
+    private void beginHover(TraceFile traces) {
+        pendingHover = traces;
+        if (hoverTimer == null) {
+            hoverTimer = new javax.swing.Timer(0, e -> applyHover());
+            hoverTimer.setRepeats(false);
+        }
+        hoverTimer.setInitialDelay(ToolTipManager.sharedInstance().getInitialDelay());
+        hoverTimer.restart();
+    }
+
+    /** The delay elapsed with the pointer still on the row. */
+    private void applyHover() {
+        if (pendingHover != hovered) {
+            hovered = pendingHover;
+            repaintPlot();
+        }
+    }
+
+    /**
+     * The pointer left the row, or the rows went away.
+     *
+     * Immediate rather than delayed: a highlight that outlived the pointer would be pointing at a
+     * row the user has already stopped asking about.
+     */
+    private void endHover() {
+        pendingHover = null;
+        if (hoverTimer != null) {
+            hoverTimer.stop();
+        }
+        if (hovered != null) {
+            hovered = null;
+            repaintPlot();
+        }
+    }
+
+    private void repaintPlot() {
+        if (plotPanel != null) {
+            plotPanel.repaint();
+        }
     }
 
     /**
