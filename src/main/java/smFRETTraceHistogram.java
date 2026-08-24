@@ -41,7 +41,11 @@ public class smFRETTraceHistogram implements Command {
     @Parameter
     LogService log;
 
-    @Parameter(description = "H5 file written by smFRET Time Traces", label = "Trace H5 file", style = "open")
+    // The file the pool starts with, not the only one it can hold. A SciJava dialog takes one
+    // file, and more are added in the window itself (issue #22) - which also keeps this
+    // parameter, and so every macro that sets it, exactly as it was.
+    @Parameter(description = "H5 file written by smFRET Time Traces, more can be added in the window",
+               label = "Trace H5 file", style = "open")
     File h5File;
 
     // Histogram types, indices match the order of the type radio buttons.
@@ -73,6 +77,12 @@ public class smFRETTraceHistogram implements Command {
     // The traces as smFRETAnalyzer wrote them, no corrections applied.
     private static final Corrections NO_CORRECTIONS = new Corrections(0.0, 0.0, 0.0);
 
+    // Wide enough for a typical movie name at the default font, and fixed rather than packed to
+    // the longest name so that adding one long name does not shove the histogram sideways.
+    private static final int POOL_WIDTH = 210;
+
+    static final String WINDOW_TITLE = "smFRET Trace Histograms";
+
     // Member variables.
     private JSpinner acceptorBaselineSpinner;
     private JSlider binsSlider;
@@ -82,10 +92,17 @@ public class smFRETTraceHistogram implements Command {
     private RangeSlider frameRangeSlider;
     private final boolean isHeadless = GraphicsEnvironment.isHeadless();
     private JSpinner leakageSpinner;
+    private JButton saveCsvButton;
+    private JButton savePngButton;
     private final RangeSlider[] valueRangeSliders = new RangeSlider[N_FILTERS];
     int nFrames = 0;
     int nSpots = 0;
     private HistogramPanel plotPanel;
+
+    // Every file loaded, ticked or not, in name order. The combined matrices above are
+    // rebuilt from whichever of these are ticked (issue #22).
+    final java.util.List<TraceFile> pool = new ArrayList<>();
+    private JPanel poolPanel;
     private Histogram result;
     float[][] sourceTraces;      // [spot][frame], acceptor.
     private JLabel statusLabel;
@@ -488,6 +505,13 @@ public class smFRETTraceHistogram implements Command {
             // An empty plot is where the user looks first, so the reason goes here rather than
             // only in the status line under it. Drawn instead of the axes: empty axes invite the
             // reading that the data is wrong, when what is wrong is a slider.
+            if (nSpots == 0) {
+                drawEmptyMessage(g2, "No files are ticked. Tick one in the list on the left to"
+                        + " plot it.", plotWidth, plotHeight);
+                g2.dispose();
+                return;
+            }
+
             String empty = emptyExplanation(result, nSpots);
             if (empty != null) {
                 drawEmptyMessage(g2, empty, plotWidth, plotHeight);
@@ -694,6 +718,14 @@ public class smFRETTraceHistogram implements Command {
 
         int getLow() {
             return low;
+        }
+
+        int getMaximum() {
+            return maximum;
+        }
+
+        int getMinimum() {
+            return minimum;
         }
 
         private void onDrag(int x) {
@@ -933,32 +965,468 @@ public class smFRETTraceHistogram implements Command {
     }
 
     /**
-     * Load the trace matrices from an smFRETAnalyzer H5 file.
+     * One trace H5 in the pool: its traces, and whether it is currently contributing.
+     *
+     * The traces are held per file rather than only in the combined matrices so that unticking a
+     * file is instant and re-reads nothing. Ticking is the control a user reaches for to ask "is
+     * this one movie dragging the distribution?", and a question asked that often should not cost
+     * a disk read every time it is asked.
      */
-    void loadTraces(File file) {
+    static final class TraceFile {
+
+        final File file;
+        boolean included = true;
+        final float[][] source;      // [spot][frame], acceptor.
+        final float[][] target;      // [spot][frame], donor.
+
+        TraceFile(File file, float[][] target, float[][] source) {
+            this.file = file;
+            this.source = source;
+            this.target = target;
+        }
+
+        /** Frames this file can offer, which is what makes it the shortest one or not. */
+        int frames() {
+            return Math.min(target[0].length, source[0].length);
+        }
+
+        String name() {
+            return file.getName();
+        }
+
+        int spots() {
+            return target.length;
+        }
+    }
+
+    /**
+     * The traces of several files laid end to end, as one pooled experiment.
+     *
+     * nFrames is the *shortest* file's rather than the longest: one frame range slider governs
+     * every trace, so they all have to span the same interval for it to mean anything, and
+     * truncating the long files is the only way to get that without inventing data. The surplus
+     * frames of a longer movie are simply never looked at - every per spot loop is bounded by
+     * nFrames, so no read runs off the end of a short file's row.
+     */
+    static final class Combined {
+
+        final int nFrames;
+        final float[][] source;
+        final float[][] target;
+
+        Combined(float[][] target, float[][] source, int nFrames) {
+            this.nFrames = nFrames;
+            this.source = source;
+            this.target = target;
+        }
+
+        int nSpots() {
+            return target.length;
+        }
+    }
+
+    /**
+     * Concatenate the traces of the files that are ticked, skipping the rest.
+     *
+     * Static, and given its input rather than reading the pool, so that the combining rule - which
+     * is the whole of what issue #22 asked for - can be tested without an H5 file or a window.
+     */
+    static Combined combine(java.util.List<TraceFile> files) {
+        int nSpots = 0;
+        int nFrames = Integer.MAX_VALUE;
+        for (TraceFile traces : files) {
+            if (traces.included) {
+                nSpots += traces.spots();
+                nFrames = Math.min(nFrames, traces.frames());
+            }
+        }
+        if (nSpots == 0) {
+            return new Combined(new float[0][], new float[0][], 0);
+        }
+
+        float[][] target = new float[nSpots][];
+        float[][] source = new float[nSpots][];
+        int at = 0;
+        for (TraceFile traces : files) {
+            if (!traces.included) {
+                continue;
+            }
+
+            // The rows are shared rather than copied. Nothing downstream writes to a trace - the
+            // corrections are applied to each value as it is read - so copying would double what
+            // a pool costs in memory and buy nothing.
+            for (int i = 0; i < traces.spots(); i++) {
+                target[at] = traces.target[i];
+                source[at] = traces.source[i];
+                at += 1;
+            }
+        }
+        return new Combined(target, source, nFrames);
+    }
+
+    /**
+     * Read one trace H5, with the checks that make a wrong file say so.
+     */
+    static TraceFile readTraceFile(File file) {
 
         // Checked before the HDF5 library is asked to open it, whose complaint about anything else
         // is a library level error with a stack trace and no mention of which file was wrong.
         smFRETFiles.requireHDF5(file);
 
+        float[][] target;
+        float[][] source;
         try (IHDF5Reader reader = HDF5Factory.openForReading(file)) {
-            targetTraces = reader.readFloatMatrix("target-traces");
-            sourceTraces = reader.readFloatMatrix("source-traces");
+            target = reader.readFloatMatrix("target-traces");
+            source = reader.readFloatMatrix("source-traces");
         }
 
-        if ((targetTraces.length == 0) || (sourceTraces.length == 0)) {
+        if ((target.length == 0) || (source.length == 0)) {
             throw new smFRETAnalysisException("No traces in " + file);
         }
-        if (targetTraces.length != sourceTraces.length) {
+        if (target.length != source.length) {
             throw new smFRETAnalysisException("Target and source trace counts differ ("
-                    + targetTraces.length + " vs " + sourceTraces.length + ") in " + file);
+                    + target.length + " vs " + source.length + ") in " + file);
+        }
+        return new TraceFile(file, target, source);
+    }
+
+    /**
+     * Load one file as the whole pool, which is what opening the plugin does.
+     */
+    void loadTraces(File file) {
+        pool.clear();
+        java.util.List<String> problems = addTraceFiles(java.util.Collections.singletonList(file));
+        if (!problems.isEmpty()) {
+
+            // The seeding file is the one the user chose in the dialog, so a failure here is not
+            // a stray in a multi-file drop and there is nothing left to carry on with.
+            throw new smFRETAnalysisException(problems.get(0));
+        }
+        log.info("loaded " + nSpots + " traces of " + nFrames + " frames from " + file);
+    }
+
+    /**
+     * Add files to the pool, keeping it in name order and free of duplicates.
+     *
+     * Returns a line per file that could not be read, empty when all of them were. A bad file in
+     * a dropped selection leaves the rest of the selection loaded rather than failing the whole
+     * drop: the usual way to get one is to sweep up a stray while selecting the wanted ones, and
+     * discarding the good files along with it would be the wrong trade.
+     */
+    java.util.List<String> addTraceFiles(java.util.List<File> files) {
+        java.util.List<String> problems = new java.util.ArrayList<>();
+        for (File file : files) {
+            if (inPool(file)) {
+                continue;
+            }
+            try {
+                pool.add(readTraceFile(file));
+            } catch (Exception e) {
+                problems.add(file.getName() + " - " + e.getMessage());
+            }
+        }
+        sortPool();
+        rebuild();
+        return problems;
+    }
+
+    /** Whether this file is already pooled, compared by path rather than by name. */
+    private boolean inPool(File file) {
+        String wanted = pathKey(file);
+        for (TraceFile traces : pool) {
+            if (pathKey(traces.file).equals(wanted)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The identity of a file, for telling "already pooled" from "another file of the same name".
+     *
+     * Canonical rather than absolute, which is the whole point: an absolute path keeps whatever
+     * spelling it arrived with, so the same file dropped from two places - through a symlinked
+     * directory, or with a './' in it - would compare unequal and be pooled twice. That does not
+     * look like a mistake in the histogram, it just silently weights one movie double.
+     *
+     * Falls back to the absolute path when the file system will not answer, which is the best
+     * that can be done and no worse than not trying.
+     */
+    private static String pathKey(File file) {
+        try {
+            return file.getCanonicalPath();
+        } catch (java.io.IOException e) {
+            return file.getAbsolutePath();
+        }
+    }
+
+    /**
+     * Name order, which is the order a folder of movies is named in and so the order they are
+     * thought about in. Ties break on the full path, because two directories of repeats will
+     * often hold the same file names.
+     */
+    private void sortPool() {
+        pool.sort((a, b) -> {
+            int byName = a.name().compareToIgnoreCase(b.name());
+            return (byName != 0) ? byName : pathKey(a.file).compareTo(pathKey(b.file));
+        });
+    }
+
+    /**
+     * Rebuild the combined traces from whichever files are ticked.
+     */
+    void rebuild() {
+        Combined combined = combine(pool);
+        targetTraces = combined.target;
+        sourceTraces = combined.source;
+        nSpots = combined.nSpots();
+        nFrames = combined.nFrames;
+        computeFilterBounds(corrections());
+    }
+
+    /** The ticked files, in the order they were concatenated. */
+    java.util.List<TraceFile> includedFiles() {
+        java.util.List<TraceFile> included = new java.util.ArrayList<>();
+        for (TraceFile traces : pool) {
+            if (traces.included) {
+                included.add(traces);
+            }
+        }
+        return included;
+    }
+
+    /**
+     * The file pool, down the left hand side of the window.
+     *
+     * A column rather than a row because the pool grows downwards and the histogram beside it
+     * wants the width: a folder of twenty repeats is an ordinary thing to pool, and a horizontal
+     * list of twenty file names is not readable at any window size.
+     *
+     * Each file is a tick box, so unticking one takes it out of the histogram without taking it
+     * out of the pool. That is the comparison this panel exists for - whether one movie is
+     * dragging the distribution - and it is a different question from "I chose the wrong file",
+     * which is what the remove button beside it answers.
+     */
+    private JComponent buildPoolPanel() {
+        poolPanel = new JPanel();
+        poolPanel.setLayout(new BoxLayout(poolPanel, BoxLayout.Y_AXIS));
+        poolPanel.setBackground(Color.WHITE);
+
+        JScrollPane scroll = new JScrollPane(poolPanel,
+                JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
+                JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        scroll.setPreferredSize(new Dimension(POOL_WIDTH, 0));
+        scroll.getVerticalScrollBar().setUnitIncrement(12);
+
+        // Dropping files anywhere over the column adds them. Once, on the scroll pane, which
+        // covers the rows inside it too - see smFRETSwing for why that is enough.
+        scroll.setTransferHandler(smFRETSwing.fileDropHandler(this::onFilesAdded));
+
+        // Kept alongside the drop target rather than replacing it: dragging is quicker when a
+        // file manager is already open, and unreachable when it is not.
+        JButton addButton = new JButton("Add...");
+        addButton.setToolTipText("Add trace H5 files to the pool. Files can also be dropped here.");
+        addButton.addActionListener(e -> onAdd());
+
+        JLabel heading = new JLabel("Trace files");
+        heading.setBorder(new EmptyBorder(0, 2, 2, 2));
+
+        JLabel hint = new JLabel("<html><i>drop files here</i></html>");
+        hint.setBorder(new EmptyBorder(2, 2, 0, 2));
+        hint.setForeground(Color.GRAY);
+
+        JPanel buttons = new JPanel(new BorderLayout());
+        buttons.add(hint, BorderLayout.NORTH);
+        buttons.add(addButton, BorderLayout.SOUTH);
+
+        JPanel column = new JPanel(new BorderLayout(0, 2));
+        column.setBorder(new EmptyBorder(6, 8, 6, 4));
+        column.add(heading, BorderLayout.NORTH);
+        column.add(scroll, BorderLayout.CENTER);
+        column.add(buttons, BorderLayout.SOUTH);
+        return column;
+    }
+
+    /**
+     * Rebuild the pool rows from the pool.
+     *
+     * Rebuilt wholesale rather than patched because adding a file re-sorts the list, so the row
+     * order after any change is not a function of the row order before it.
+     */
+    void refreshPoolPanel() {
+        if (poolPanel == null) {
+            return;
+        }
+        poolPanel.removeAll();
+        for (TraceFile traces : pool) {
+            poolPanel.add(buildPoolRow(traces));
         }
 
-        nSpots = targetTraces.length;
-        nFrames = Math.min(targetTraces[0].length, sourceTraces[0].length);
-        computeFilterBounds(corrections());
+        // Holds the rows at the top of the column. Without it BoxLayout spreads them down the
+        // whole height and a pool of two files sits with a gap between them.
+        poolPanel.add(Box.createVerticalGlue());
+        poolPanel.revalidate();
+        poolPanel.repaint();
+    }
 
-        log.info("loaded " + nSpots + " traces of " + nFrames + " frames from " + file);
+    /**
+     * One row of the pool: tick box, name, trace count and a remove button.
+     */
+    private JComponent buildPoolRow(TraceFile traces) {
+        JCheckBox tick = new JCheckBox(traces.name(), traces.included);
+        tick.setBackground(Color.WHITE);
+
+        // The name is often too long for the column, and the part that identifies a movie is
+        // usually its tail rather than its head. The tooltip carries the full path and the shape
+        // of the file, which is what says why one of them is limiting the frame range.
+        tick.setToolTipText(smFRETSwing.dialogMessage(pathKey(traces.file) + "\n"
+                + String.format("%,d traces of %,d frames", traces.spots(), traces.frames())));
+        tick.addActionListener(e -> {
+            traces.included = tick.isSelected();
+            onPoolTicked();
+        });
+
+        JButton remove = new JButton("×");
+        remove.setToolTipText("Remove " + traces.name() + " from the pool");
+        remove.setMargin(new Insets(0, 4, 0, 4));
+        remove.setFocusable(false);
+
+        // The last file cannot be removed. An empty pool has no directory to open a save dialog
+        // in and no name to title a plot with, and "untick it" already covers wanting it out of
+        // the histogram - so the button that would empty the pool is the one that is not needed.
+        remove.setEnabled(pool.size() > 1);
+        remove.addActionListener(e -> {
+            pool.remove(traces);
+            rebuild();
+            onPoolChanged();
+        });
+
+        JPanel row = new JPanel(new BorderLayout(2, 0));
+        row.setBackground(Color.WHITE);
+        row.add(tick, BorderLayout.CENTER);
+        row.add(remove, BorderLayout.EAST);
+
+        // BoxLayout otherwise stretches every row to the tallest one it can, which on a short
+        // pool makes each name a band the height of the column.
+        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
+        row.setAlignmentX(Component.LEFT_ALIGNMENT);
+        return row;
+    }
+
+    /**
+     * Files were added or removed: the pool is materially different, so the sliders start over.
+     */
+    void onPoolChanged() {
+        refreshPoolPanel();
+        resetSliderRanges();
+        retitle();
+        update();
+    }
+
+    /**
+     * A file was ticked or unticked: the same pool seen a different way, so the filters stay put.
+     */
+    private void onPoolTicked() {
+        rebuild();
+        rescaleSliderRanges();
+        retitle();
+        update();
+    }
+
+    /**
+     * Prompt for files to add.
+     */
+    private void onAdd() {
+        JFileChooser chooser = new JFileChooser(poolDirectory());
+        chooser.setDialogTitle("Select smFRET trace H5 files");
+        chooser.setMultiSelectionEnabled(true);
+        if (chooser.showOpenDialog(ownerWindow()) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        onFilesAdded(java.util.Arrays.asList(chooser.getSelectedFiles()));
+    }
+
+    /**
+     * Add files from a drop or the chooser, reporting whichever of them could not be read.
+     */
+    private void onFilesAdded(java.util.List<File> files) {
+        java.util.List<String> problems;
+        try {
+            problems = addTraceFiles(files);
+        } catch (Exception e) {
+            log.info(e);
+            JOptionPane.showMessageDialog(ownerWindow(),
+                    smFRETSwing.dialogMessage("Could not add files:\n" + e.getMessage()),
+                    WINDOW_TITLE, JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        onPoolChanged();
+
+        // After the pool has been updated, not instead of updating it - the files that did read
+        // are already in and the window should show them while this is on screen.
+        if (!problems.isEmpty()) {
+            // Through dialogMessage because these name paths: a plain string would make
+            // JOptionPane as wide as the longest of them, which is wider than the screen.
+            JOptionPane.showMessageDialog(ownerWindow(),
+                    smFRETSwing.dialogMessage("Not added:\n" + String.join("\n", problems)),
+                    WINDOW_TITLE, JOptionPane.WARNING_MESSAGE);
+        }
+    }
+
+    /**
+     * The window the pool panel is in, or null before it is in one.
+     *
+     * Looked up rather than held, which is what lets every control in this panel be built before
+     * the frame exists and still address it afterwards. The alternative was threading a JFrame
+     * through six methods whose only use for it was setTitle.
+     */
+    private java.awt.Window ownerWindow() {
+        return (poolPanel == null) ? null : SwingUtilities.getWindowAncestor(poolPanel);
+    }
+
+    /** Retitle the window for the current selection, if there is a window yet. */
+    private void retitle() {
+        java.awt.Window window = ownerWindow();
+        if (window instanceof JFrame) {
+            ((JFrame) window).setTitle(WINDOW_TITLE + " - " + poolLabel());
+        }
+    }
+
+    /**
+     * How the ticked files are named in the window title, the saved plot and the status line.
+     */
+    String poolLabel() {
+        java.util.List<TraceFile> included = includedFiles();
+        if (included.isEmpty()) {
+            return "no files selected";
+        }
+        if (included.size() == 1) {
+            return included.get(0).name();
+        }
+        return included.size() + " files";
+    }
+
+    /** Where the save and add dialogs open, which is beside whichever file is first. */
+    private File poolDirectory() {
+        java.util.List<TraceFile> included = includedFiles();
+        File first = included.isEmpty() ? pool.get(0).file : included.get(0).file;
+        return first.getParentFile();
+    }
+
+    /**
+     * The path a saved CSV or PNG is offered under.
+     *
+     * A pool is named after its first file with a suffix rather than after all of them, because
+     * the alternative is a file name that grows with the pool - and the files that went into it
+     * are written into the CSV header, where they can be read without being in the name.
+     */
+    private String poolSaveRoot() {
+        java.util.List<TraceFile> included = includedFiles();
+        if (included.size() == 1) {
+            return stripExtension(included.get(0).file);
+        }
+        File first = included.isEmpty() ? pool.get(0).file : included.get(0).file;
+        return stripExtension(first) + "_pool";
     }
 
     /**
@@ -985,7 +1453,14 @@ public class smFRETTraceHistogram implements Command {
             }
         }
         for (int f = 0; f < FILTER_NAMES.length; f++) {
-            if (filterMax[f] <= filterMin[f]) {
+
+            // With nothing ticked the loop above ran zero times and both bounds are still their
+            // sentinels, which resetFilterSliderRange would cast to an int and overflow. Nothing
+            // is being filtered in that state, so any finite range will do.
+            if (nSpots == 0) {
+                filterMin[f] = 0.0;
+                filterMax[f] = 1.0;
+            } else if (filterMax[f] <= filterMin[f]) {
                 filterMax[f] = filterMin[f] + 1.0;
             }
         }
@@ -1020,39 +1495,24 @@ public class smFRETTraceHistogram implements Command {
     }
 
     /**
-     * Prompt for a different H5 file and reload.
-     */
-    private void onBrowse(JFrame frame) {
-        JFileChooser chooser = new JFileChooser(h5File.getParentFile());
-        chooser.setDialogTitle("Select an smFRET trace H5 file");
-        if (chooser.showOpenDialog(frame) != JFileChooser.APPROVE_OPTION) {
-            return;
-        }
-        try {
-            File selected = chooser.getSelectedFile();
-            loadTraces(selected);
-            h5File = selected;
-            frame.setTitle("smFRET Trace Histograms - " + h5File.getName());
-            resetSliderRanges();
-            update();
-        } catch (Exception e) {
-            log.info(e);
-            JOptionPane.showMessageDialog(frame, "Could not read traces:\n" + e.getMessage(),
-                    "smFRET Trace Histograms", JOptionPane.ERROR_MESSAGE);
-        }
-    }
-
-    /**
      * Write the current histogram out as a CSV table.
      */
     private void onSaveCsv(JFrame frame) {
-        JFileChooser chooser = new JFileChooser(h5File.getParentFile());
-        chooser.setSelectedFile(new File(stripExtension(h5File) + "_histogram.csv"));
+        JFileChooser chooser = new JFileChooser(poolDirectory());
+        chooser.setSelectedFile(new File(poolSaveRoot() + "_histogram.csv"));
         if (chooser.showSaveDialog(frame) != JFileChooser.APPROVE_OPTION) {
             return;
         }
         try (PrintWriter writer = new PrintWriter(chooser.getSelectedFile())) {
-            writer.println("# " + result.valueLabel + " from " + h5File);
+            writer.println("# " + result.valueLabel + " from " + poolLabel());
+
+            // Every ticked file with its own trace count, which is the only record of what went
+            // into a pooled histogram - the file name carries the first one and nothing else.
+            for (TraceFile traces : includedFiles()) {
+                writer.println("# file: " + traces.file + " (" + traces.spots() + " traces of "
+                        + traces.frames() + " frames)");
+            }
+            writer.println("# frames pooled: " + nFrames + ", the shortest file's");
             // All three ranges, including the ones left wide open. A saved histogram has to say
             // what was filtered, and an omitted line reads as "no filter" rather than "this one
             // was untouched" only if you already know how many there are.
@@ -1083,8 +1543,8 @@ public class smFRETTraceHistogram implements Command {
      * Write the current plot out as a PNG.
      */
     private void onSavePng(JFrame frame) {
-        JFileChooser chooser = new JFileChooser(h5File.getParentFile());
-        chooser.setSelectedFile(new File(stripExtension(h5File) + "_histogram.png"));
+        JFileChooser chooser = new JFileChooser(poolDirectory());
+        chooser.setSelectedFile(new File(poolSaveRoot() + "_histogram.png"));
         if (chooser.showSaveDialog(frame) != JFileChooser.APPROVE_OPTION) {
             return;
         }
@@ -1104,7 +1564,7 @@ public class smFRETTraceHistogram implements Command {
      * rather than being drawn into the panel on screen.
      */
     BufferedImage renderPlotImage() {
-        String title = h5File.getName();
+        String title = poolLabel();
         int titleHeight = 30;
 
         BufferedImage image = new BufferedImage(plotPanel.getWidth(),
@@ -1138,6 +1598,44 @@ public class smFRETTraceHistogram implements Command {
             frameRangeSlider.setRange(1, Math.max(1, nFrames));
             frameRangeSlider.setValues(1, Math.max(1, nFrames));
             resetFilterSliderRange();
+        } finally {
+            suspendUpdates = wasSuspended;
+        }
+    }
+
+    /**
+     * Re-scale the sliders to the ticked files without discarding the limits the user set.
+     *
+     * The counterpart to resetSliderRanges(): ticking a file in or out is the same experiment
+     * seen a different way, and the question being asked is whether that one movie moves the
+     * distribution - which it cannot answer if the filters reset underneath it every time.
+     *
+     * A handle sitting at its limit is the exception. That is not a number anyone chose, it is
+     * the slider saying "no limit", so it follows the limit rather than staying behind at the old
+     * value - otherwise ticking in a brighter file would leave an untouched slider quietly
+     * excluding its traces. Handles that were moved keep their value, clamped to the new range.
+     */
+    private void rescaleSliderRanges() {
+        boolean wasSuspended = suspendUpdates;
+        suspendUpdates = true;
+        try {
+            boolean framesWereOpen = (frameRangeSlider.getLow() <= frameRangeSlider.getMinimum())
+                    && (frameRangeSlider.getHigh() >= frameRangeSlider.getMaximum());
+            frameRangeSlider.setRange(1, Math.max(1, nFrames));
+            if (framesWereOpen) {
+                frameRangeSlider.setValues(1, Math.max(1, nFrames));
+            }
+
+            for (int f = 0; f < N_FILTERS; f++) {
+                RangeSlider slider = valueRangeSliders[f];
+                boolean lowWasOpen = slider.getLow() <= slider.getMinimum();
+                boolean highWasOpen = slider.getHigh() >= slider.getMaximum();
+                int lo = (int) Math.floor(filterMin[f]);
+                int hi = (int) Math.ceil(filterMax[f]);
+                slider.setRange(lo, hi);
+                slider.setValues(lowWasOpen ? lo : slider.getLow(),
+                        highWasOpen ? hi : slider.getHigh());
+            }
         } finally {
             suspendUpdates = wasSuspended;
         }
@@ -1217,8 +1715,13 @@ public class smFRETTraceHistogram implements Command {
                 binsSlider.getValue(),
                 corrections);
 
-        String status = String.format("%,d of %,d traces · frames %d-%d (%,d wide)",
-                result.nSpotsUsed, nSpots,
+        // The file count only when there is more than one, so a single file reads exactly as it
+        // did before the pool existed.
+        int nIncluded = includedFiles().size();
+        String from = (nIncluded > 1) ? String.format(" from %d files", nIncluded) : "";
+
+        String status = String.format("%,d of %,d traces%s · frames %d-%d (%,d wide)",
+                result.nSpotsUsed, nSpots, from,
                 frameRangeSlider.getLow(), frameRangeSlider.getHigh(),
                 frameRangeSlider.getHigh() - frameRangeSlider.getLow() + 1);
         if (result.nOutside > 0) {
@@ -1245,6 +1748,13 @@ public class smFRETTraceHistogram implements Command {
         // it dropped. The tooltip is the same text, so nothing is unreachable.
         statusLabel.setToolTipText(status);
 
+        // Nothing ticked means there is no histogram to write, and a PNG of the message that
+        // says so is not a plot anybody wanted to save.
+        if (saveCsvButton != null) {
+            saveCsvButton.setEnabled(nSpots > 0);
+            savePngButton.setEnabled(nSpots > 0);
+        }
+
         plotPanel.repaint();
     }
 
@@ -1252,7 +1762,7 @@ public class smFRETTraceHistogram implements Command {
      * Build the window.
      */
     private void showWindow() {
-        JFrame frame = new JFrame("smFRET Trace Histograms - " + h5File.getName());
+        JFrame frame = new JFrame(WINDOW_TITLE + " - " + poolLabel());
         frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
 
         // Histogram type.
@@ -1267,18 +1777,12 @@ public class smFRETTraceHistogram implements Command {
             typePanel.add(typeButtons[i]);
         }
 
-        // File row.
-        JPanel filePanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
-        JButton browseButton = new JButton("Browse...");
-        browseButton.addActionListener(e -> onBrowse(frame));
-        filePanel.add(new JLabel("H5 file:"));
-        JLabel fileLabel = new JLabel(h5File.getName());
-        filePanel.add(fileLabel);
-        filePanel.add(browseButton);
+        // The pool lives in its own column down the left (issue #22), so the top of the window
+        // is the histogram type on its own.
+        JComponent poolColumn = buildPoolPanel();
 
         JPanel topPanel = new JPanel();
         topPanel.setLayout(new BoxLayout(topPanel, BoxLayout.Y_AXIS));
-        topPanel.add(filePanel);
         topPanel.add(typePanel);
 
         // Plot.
@@ -1345,9 +1849,9 @@ public class smFRETTraceHistogram implements Command {
 
         // Status and save buttons.
         statusLabel = new JLabel(" ");
-        JButton saveCsvButton = new JButton("Save CSV...");
+        saveCsvButton = new JButton("Save CSV...");
         saveCsvButton.addActionListener(e -> onSaveCsv(frame));
-        JButton savePngButton = new JButton("Save PNG...");
+        savePngButton = new JButton("Save PNG...");
         savePngButton.addActionListener(e -> onSavePng(frame));
 
         // The status line gets the full width of the window, with the buttons on their own row
@@ -1368,9 +1872,11 @@ public class smFRETTraceHistogram implements Command {
 
         frame.getContentPane().setLayout(new BorderLayout());
         frame.getContentPane().add(topPanel, BorderLayout.NORTH);
+        frame.getContentPane().add(poolColumn, BorderLayout.WEST);
         frame.getContentPane().add(plotPanel, BorderLayout.CENTER);
         frame.getContentPane().add(southPanel, BorderLayout.SOUTH);
 
+        refreshPoolPanel();
         resetSliderRanges();
         update();
 

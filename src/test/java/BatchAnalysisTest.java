@@ -349,22 +349,22 @@ class BatchAnalysisTest {
     @Test
     @DisplayName("the settings line wraps, and a long path can break")
     void theSettingsLineWraps() {
-        assertTrue(smFRETBatchAnalyzer.wrapped("x").startsWith("<html>"),
+        assertTrue(smFRETSwing.wrapped("x").startsWith("<html>"),
                 "plain text in a JLabel is one clipped line, not a wrapped paragraph");
 
-        String windows = smFRETBatchAnalyzer.breakable(
+        String windows = smFRETSwing.breakable(
                 "C:\\Users\\xiaot\\Desktop\\test\\film1_mapping.json");
         assertTrue(windows.contains("\u200b"), "a Windows path should gain break opportunities");
         assertEquals("C:\\Users\\xiaot\\Desktop\\test\\film1_mapping.json",
                 windows.replace("\u200b", ""),
                 "and nothing else - the path still has to read as itself");
 
-        assertTrue(smFRETBatchAnalyzer.breakable("/home/x/y.json").contains("\u200b"),
+        assertTrue(smFRETSwing.breakable("/home/x/y.json").contains("\u200b"),
                 "a POSIX path too");
 
         // Prose is left alone, so a message without a path in it is not peppered with them.
         String prose = "re-run smFRET Spot Finder on one movie";
-        assertEquals(prose, smFRETBatchAnalyzer.breakable(prose));
+        assertEquals(prose, smFRETSwing.breakable(prose));
     }
 
     /**
@@ -377,10 +377,10 @@ class BatchAnalysisTest {
     @Test
     @DisplayName("a file name with markup in it survives the label")
     void namesAreEscaped() {
-        assertEquals("a&amp;b &lt;c&gt;.json", smFRETBatchAnalyzer.escaped("a&b <c>.json"));
+        assertEquals("a&amp;b &lt;c&gt;.json", smFRETSwing.escaped("a&b <c>.json"));
 
         // The ampersand is replaced first, or the escapes escape each other.
-        assertEquals("&amp;lt;", smFRETBatchAnalyzer.escaped("&lt;"));
+        assertEquals("&amp;lt;", smFRETSwing.escaped("&lt;"));
     }
 
     private static String quote(File file) {
