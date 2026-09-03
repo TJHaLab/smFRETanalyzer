@@ -622,9 +622,14 @@ public class smFRETChannelMapper implements Command {
             mapping.put("image width", averageImage.getWidth());
             mapping.put("image height", averageImage.getHeight());
 
+            // Serialized whole before the file is opened, for the reason smFRETSpotFinder does
+            // the same: writeValue(File, ..) streams, so anything it cannot serialize leaves a
+            // truncated file behind. Nothing in this map can fail the way a File once did there
+            // - these are arrays and ints - so this is consistency rather than a fix.
             ObjectMapper mapper = new ObjectMapper();
+            String mappingJSON = mapper.writeValueAsString(mapping);
             File saveFile = new File(saveRootName + "_mapping.json");
-            mapper.writeValue(saveFile, mapping);
+            smFRETFiles.writeText(saveFile, mappingJSON);
 
             // We could have just loaded the transformed image from the current turboRegObject,
             // but we go the more complicated route to also test the other functionality of
