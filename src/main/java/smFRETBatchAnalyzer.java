@@ -675,7 +675,8 @@ public class smFRETBatchAnalyzer implements Command {
      */
     private void onFilesAdded(java.util.List<File> files) {
         java.util.List<String> skipped = new ArrayList<>();
-        for (File file : files) {
+        for (File chosen : files) {
+            File file = plain(chosen);
             if (queued(file)) {
                 continue;
             }
@@ -779,6 +780,19 @@ public class smFRETBatchAnalyzer implements Command {
 
     private int backgroundFrames() {
         return ((Number) backgroundSpinner.getValue()).intValue();
+    }
+
+    /**
+     * A movie as a plain path, whatever kind of File the chooser handed over.
+     *
+     * JFileChooser on Windows returns `sun.awt.shell.Win32ShellFolder2`, a live handle on a
+     * shell item rather than a path. It is a File and behaves like one, but it is not
+     * interchangeable with one: anything that dispatches on the exact class gets a different
+     * answer for it, which is how a queue full of them silently broke the settings JSON that
+     * every analysed movie writes. Drag and drop hands over plain Files already.
+     */
+    private static File plain(File file) {
+        return (file.getClass() == File.class) ? file : new File(file.getPath());
     }
 
     /** Where the file choosers open: beside the movies if there are any, else the settings. */

@@ -28,6 +28,8 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
@@ -270,6 +272,19 @@ final class smFRETFiles {
         if (file.length() == 0) {
             throw new smFRETAnalysisException("Error: " + file + " is empty.");
         }
+    }
+
+    /**
+     * Write text that is already complete.
+     *
+     * The streaming writers - ObjectMapper.writeValue(File, ..), PrintWriter - open the file
+     * first and produce the content as they go, so anything that fails partway leaves a
+     * truncated file on disk. That file then exists, and is newer than it was, which is enough
+     * to convince every "did this run write its output" check that the run worked. Building the
+     * whole string first turns that failure back into no file at all.
+     */
+    static void writeText(File file, String text) throws IOException {
+        Files.write(file.toPath(), text.getBytes(StandardCharsets.UTF_8));
     }
 
     /**

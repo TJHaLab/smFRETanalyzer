@@ -1806,8 +1806,15 @@ public class smFRETSpotFinder implements Command, Interactive, org.scijava.Initi
             mapping.put("background kappa", clippingThreshold());
             mapping.put("edge margin", edgeMargin);
             mapping.put("end slice", endSlice);
-            mapping.put("image name", inputImageName);
-            mapping.put("mapping file", mappingFile);
+            // toString(), and not because a File would be more convenient here. Jackson
+            // registers its File serializer against `java.io.File` exactly, so a subclass
+            // misses that lookup and is serialized as a bean instead. Windows file choosers
+            // hand back `sun.awt.shell.Win32ShellFolder2`, which under Java 16 and later is
+            // in a package no longer open for reflection - Jackson finds no properties on it
+            // and throws, part way through writing this file. Everything reading these two
+            // keys casts them to String, so writing anything else was never right.
+            mapping.put("image name", inputImageName.toString());
+            mapping.put("mapping file", mappingFile.toString());
             mapping.put("masks file", masksFileName);
             mapping.put("root name", saveRootName);
             mapping.put("spots file", spotsFileName);
@@ -1822,9 +1829,13 @@ public class smFRETSpotFinder implements Command, Interactive, org.scijava.Initi
             mapping.put("spot tolerance estimated", spotTolerance <= 0.0);
             mapping.put("start slice", startSlice);
 
+            // Serialized whole before anything is opened for writing. writeValue(File, ..)
+            // streams, so a value it cannot serialize leaves a half-written JSON behind that
+            // looks like a finished run to anything that only checks the file exists.
             ObjectMapper mapper = new ObjectMapper();
+            String mappingJSON = mapper.writeValueAsString(mapping);
             File saveFile = new File(saveRootName + "_spotf_finding.json");
-            mapper.writeValue(saveFile, mapping);
+            smFRETFiles.writeText(saveFile, mappingJSON);
 
             // Table w/ spot locations.
             saveSpotLocations(spotsFileName, filteredSpots);
